@@ -181,7 +181,7 @@ local function init_reddev(dev_uuid, force_red)
     local function isDeviceValid(dev_uuid)
         checkArg(1, dev_uuid, "string")
 
-        local dev_uuid_full = _component.get(dev_uuid, "")
+        local dev_uuid_full = _component.get(dev_uuid)
     
         if not dev_uuid_full or dev_uuid_full == "" then
             return false, ("No device found with UUID '" .. dev_uuid .. "'")
@@ -234,7 +234,7 @@ local function init_shared_from_config(redstone_required)
     end
 
     ---@diagnostic disable-next-line: param-type-mismatch
-    shared.reddev = _component.proxy(_component.get(config.dev_redstone, ""))
+    shared.reddev = _component.proxy(_component.get(config.dev_redstone))
     if not shared.reddev then
         print("No redstone component in use.")
     end
