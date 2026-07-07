@@ -47,7 +47,6 @@ local MT = {
   HELLO = "h",
   BYE = "b",
   HB = "! ",
-  PING = "? ",
   PONG = "= ",
   TP_REQ = "R",
   TP_ACK = "A",
@@ -89,7 +88,7 @@ local function persist_name()
   end
 end
 
--- Peer table: { [addr] = { name: string, last_beat: number, online: bool } }
+-- Peer table: { [addr] = { name: string, last_beat: number, online: bool, modem_addr: string } }
 local peers = {}
 
 -- FSM states: IDLE | REQUESTING | COUNTDOWN_LOCAL | COUNTDOWN_REMOTE | COOLDOWN
@@ -252,7 +251,7 @@ end
 -- Peer tracking
 -- ---------------------------------------------------------------------------
 
-local function peer_beat(addr, name)
+local function peer_beat(addr, name, modem_addr)
   if addr == MY_ADDR then
     return
   end
@@ -264,11 +263,15 @@ local function peer_beat(addr, name)
       name = name or ("Node-" .. addr:sub(1, 6)),
       last_beat = computer.uptime(),
       online = true,
+      modem_addr = modem_addr,
     }
     force_redraw = true
   else
     peers[addr].last_beat = computer.uptime()
     peers[addr].online = true
+    if modem_addr then
+      peers[addr].modem_addr = modem_addr
+    end
     if name and name ~= peers[addr].name then
       peers[addr].name = name
       force_redraw = true
@@ -326,7 +329,6 @@ end
 
 local function discover()
   send_msg({ t = MT.HELLO, s = MY_ADDR, n = MY_NAME })
-  send_msg({ t = MT.PING, s = MY_ADDR, d = "*" })
 end
 
 local function heartbeat()
@@ -596,7 +598,9 @@ local function request_teleport(dest_addr)
   APP_STATE = "REQUESTING"
   force_redraw = true
 
-  send_msg({ t = MT.TP_REQ, s = MY_ADDR, d = dest_addr, id = seq }, dest_addr)
+  local peer = peers[dest_addr]
+  local modem_target = peer and peer.modem_addr or dest_addr
+  send_msg({ t = MT.TP_REQ, s = MY_ADDR, d = dest_addr, id = seq }, modem_target)
 
   if request_timeout_timer then
     event.cancel(request_timeout_timer)
@@ -616,7 +620,7 @@ end
 -- Incoming message handler
 -- ---------------------------------------------------------------------------
 
-local function handle_message(_, port, payload)
+local function handle_message(remote_addr, port, payload)
   if port ~= PORT then
     return
   end
@@ -632,13 +636,13 @@ local function handle_message(_, port, payload)
 
   if msg.t == MT.HELLO then
     event.timer(random_delay(1, 5), function()
-      send_msg({ t = MT.PONG, s = MY_ADDR, n = MY_NAME, d = src }, src)
+      send_msg({ t = MT.PONG, s = MY_ADDR, n = MY_NAME, d = src }, remote_addr)
     end, 1)
-    peer_beat(src, msg.n)
+    peer_beat(src, msg.n, remote_addr)
     return
   end
   if msg.t == MT.HB then
-    peer_beat(src, msg.n)
+    peer_beat(src, msg.n, remote_addr)
     return
   end
   if msg.t == MT.BYE then
@@ -648,16 +652,8 @@ local function handle_message(_, port, payload)
     end
     return
   end
-  if msg.t == MT.PING then
-    if msg.d == "*" or msg.d == MY_ADDR then
-      event.timer(random_delay(1, 5), function()
-        send_msg({ t = MT.PONG, s = MY_ADDR, n = MY_NAME, d = src }, src)
-      end, 1)
-    end
-    return
-  end
   if msg.t == MT.PONG then
-    peer_beat(src, msg.n)
+    peer_beat(src, msg.n, remote_addr)
     return
   end
   if msg.t == MT.RENAME then
@@ -667,7 +663,7 @@ local function handle_message(_, port, payload)
 
   if msg.t == MT.TP_REQ then
     if APP_STATE ~= "IDLE" or rename_mode then
-      send_msg({ t = MT.TP_ACK, s = MY_ADDR, d = src, id = msg.id, ok = false, pwr = 0 }, src)
+      send_msg({ t = MT.TP_ACK, s = MY_ADDR, d = src, id = msg.id, ok = false, pwr = 0 }, remote_addr)
       return
     end
     local our_power = get_ae_power()
@@ -679,7 +675,7 @@ local function handle_message(_, port, payload)
       id = msg.id,
       ok = power_ok,
       pwr = our_power,
-    }, src)
+    }, remote_addr)
     if power_ok then
       start_countdown(src, MY_ADDR, msg.id, true, our_power, false)
     end
