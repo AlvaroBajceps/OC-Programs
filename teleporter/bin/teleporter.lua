@@ -5,6 +5,17 @@
 --   * Network Card in a card slot of each computer
 --   * All computers connected via OC cable (same wired segment)
 --   * T2 Screen + Keyboard attached
+--   * Redstone I/O block adjacent to the computer (or a Redstone Card in a
+--     slot). T2 card required for bundled I/O.
+--   * Exactly one bundled cable (ProjectRed / RedLogic) on any side of the
+--     Redstone I/O. The cable must carry two signals:
+--       Black (color 15) - permanently driven high by an external source;
+--                         used as a cable-health heartbeat and lets each
+--                         node auto-discover which side the cable is on.
+--       Red   (color 14) - driven high only while the teleporter entity is
+--                         physically at this node. Exactly one node on the
+--                         network may hold Red high at any time; that node
+--                         is the only one allowed to initiate a teleport.
 --   * Optional: an Adapter touching an me_controller for real AE power telemetry
 
 local component = require("component")
@@ -29,6 +40,12 @@ local NAME_FILE = "/home/.teleporter_name"
 local SYNC_HANG_TIMEOUT = 5
 local DEST_HANG_TIMEOUT = 5
 local POWER_STALE_SEC = 3
+
+-- OC bundled-redstone color bit indices (ProjectRed / RedLogic compatible,
+-- matches OpenOS `colors.red` / `colors.black`). Inlined to avoid a `require`
+-- for just two constants.
+local COLOR_RED = 14
+local COLOR_BLACK = 15
 
 local OUTCOME = {
   CONFIRMED = "ok",
@@ -115,6 +132,13 @@ local force_redraw = true
 local rename_mode = false
 local rename_buffer = ""
 
+-- Redstone state. rs is nil when no redstone component is available;
+-- rs_side is nil when no bundled cable carrying Black-high is found.
+local rs = nil
+local rs_side = nil
+local local_red_high = false
+local local_black_high = false
+
 local gpu
 local screen_addr
 local scr_w, scr_h = 80, 25
@@ -140,6 +164,7 @@ local remote_cooldown_timer = nil
 local modem_listener = nil
 local touch_listener = nil
 local key_listener = nil
+local redstone_listener = nil
 
 -- Shutdown guard: prevents re-entrant cleanup and post-shutdown resource creation
 local shutting_down = false
@@ -177,6 +202,73 @@ local function setup_modem()
 end
 
 local modem = setup_modem()
+
+-- ---------------------------------------------------------------------------
+-- Redstone setup & health state
+-- ---------------------------------------------------------------------------
+
+local function setup_redstone()
+  if not component.isAvailable("redstone") then
+    return nil
+  end
+  return component.redstone
+end
+
+local function refresh_rs_state()
+  if not rs then
+    rs_side = nil
+    local_black_high = false
+    local_red_high = false
+    return
+  end
+  local new_side = nil
+  for side = 0, 5 do
+    if rs.getBundledInput(side, COLOR_BLACK) > 0 then
+      new_side = side
+      break
+    end
+  end
+  local new_black = new_side ~= nil
+  local new_red = false
+  if new_side ~= nil then
+    new_red = rs.getBundledInput(new_side, COLOR_RED) > 0
+  end
+  if new_side ~= rs_side or new_red ~= local_red_high or new_black ~= local_black_high then
+    rs_side = new_side
+    local_black_high = new_black
+    local_red_high = new_red
+    force_redraw = true
+  end
+end
+
+local function count_red_high()
+  local count = 0
+  if local_black_high and local_red_high then
+    count = count + 1
+  end
+  for _, p in pairs(peers) do
+    if p.online and p.has_tp then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+local function check_health()
+  if not rs then
+    return true, "Redstone I/O component not detected"
+  end
+  if not local_black_high then
+    return true, "Bundled cable missing (Black health signal not found on any side)"
+  end
+  local red_count = count_red_high()
+  if red_count > 1 then
+    return true, red_count .. " nodes report teleporter present (Red conflict)"
+  end
+  return false, nil
+end
+
+rs = setup_redstone()
 
 -- ---------------------------------------------------------------------------
 -- GPU / Screen setup
@@ -251,7 +343,7 @@ end
 -- Peer tracking
 -- ---------------------------------------------------------------------------
 
-local function peer_beat(addr, name, modem_addr)
+local function peer_beat(addr, name, modem_addr, has_tp)
   if addr == MY_ADDR then
     return
   end
@@ -264,6 +356,7 @@ local function peer_beat(addr, name, modem_addr)
       last_beat = computer.uptime(),
       online = true,
       modem_addr = modem_addr,
+      has_tp = has_tp == true,
     }
     force_redraw = true
   else
@@ -274,6 +367,11 @@ local function peer_beat(addr, name, modem_addr)
     end
     if name and name ~= peers[addr].name then
       peers[addr].name = name
+      force_redraw = true
+    end
+    local new_tp = has_tp == true
+    if peers[addr].has_tp ~= new_tp then
+      peers[addr].has_tp = new_tp
       force_redraw = true
     end
   end
@@ -328,11 +426,11 @@ local function random_delay(min_sec, max_sec)
 end
 
 local function discover()
-  send_msg({ t = MT.HELLO, s = MY_ADDR, n = MY_NAME })
+  send_msg({ t = MT.HELLO, s = MY_ADDR, n = MY_NAME, rh = local_red_high })
 end
 
 local function heartbeat()
-  send_msg({ t = MT.HB, s = MY_ADDR, n = MY_NAME, ts = computer.uptime() })
+  send_msg({ t = MT.HB, s = MY_ADDR, n = MY_NAME, ts = computer.uptime(), rh = local_red_high })
 end
 
 local function broadcast_rename()
@@ -636,24 +734,27 @@ local function handle_message(remote_addr, port, payload)
 
   if msg.t == MT.HELLO then
     event.timer(random_delay(1, 5), function()
-      send_msg({ t = MT.PONG, s = MY_ADDR, n = MY_NAME, d = src }, remote_addr)
+      send_msg({ t = MT.PONG, s = MY_ADDR, n = MY_NAME, d = src, rh = local_red_high }, remote_addr)
     end, 1)
-    peer_beat(src, msg.n, remote_addr)
+    peer_beat(src, msg.n, remote_addr, msg.rh)
     return
   end
   if msg.t == MT.HB then
-    peer_beat(src, msg.n, remote_addr)
+    peer_beat(src, msg.n, remote_addr, msg.rh)
     return
   end
   if msg.t == MT.BYE then
     if peers[src] then
       peers[src].online = false
+      if peers[src].has_tp then
+        peers[src].has_tp = false
+      end
       force_redraw = true
     end
     return
   end
   if msg.t == MT.PONG then
-    peer_beat(src, msg.n, remote_addr)
+    peer_beat(src, msg.n, remote_addr, msg.rh)
     return
   end
   if msg.t == MT.RENAME then
@@ -1331,6 +1432,94 @@ local function render_cooldown()
 end
 
 -- ---------------------------------------------------------------------------
+-- UI: unhealthy screen (full-screen takeover when a healthcheck fails)
+-- ---------------------------------------------------------------------------
+
+local function render_unhealthy(reason)
+  hit_regions = {}
+  gpu.setBackground(0x000000)
+  gpu.setForeground(0xFF0000)
+  gpu.fill(1, 1, scr_w, scr_h, " ")
+
+  gpu.setBackground(0x330000)
+  gpu.setForeground(0xFF4444)
+  gpu.fill(1, 1, scr_w, 3, " ")
+  draw_text_centered(1, 2, scr_w, " !! SYSTEM UNHEALTHY !! ", 0xFF4444, 0x330000)
+
+  gpu.setBackground(0x000000)
+  gpu.setForeground(0xFFAA00)
+  draw_text_centered(1, 5, scr_w, "Teleporter locked until resolved", 0xFFAA00, 0x000000)
+
+  gpu.setForeground(0xFFFFFF)
+  local reason_trimmed = reason or "Unknown cause"
+  if #reason_trimmed > scr_w - 4 then
+    reason_trimmed = reason_trimmed:sub(1, scr_w - 7) .. "..."
+  end
+  draw_text_centered(1, 7, scr_w, reason_trimmed, 0xFFFFFF, 0x000000)
+
+  local detail_y = 10
+  gpu.setForeground(0xAAAAAA)
+  if rs == nil then
+    draw_text_centered(1, detail_y, scr_w, "[ ] Redstone I/O component: MISSING", 0xFF4444, 0x000000)
+    detail_y = detail_y + 1
+  else
+    draw_text_centered(1, detail_y, scr_w, "[+] Redstone I/O component: present", 0x00FF00, 0x000000)
+    detail_y = detail_y + 1
+    if local_black_high then
+      draw_text_centered(1, detail_y, scr_w, "[+] Cable (Black): healthy", 0x00FF00, 0x000000)
+    else
+      draw_text_centered(1, detail_y, scr_w, "[ ] Cable (Black): not detected on any side", 0xFF4444, 0x000000)
+    end
+    detail_y = detail_y + 1
+    draw_text_centered(
+      1,
+      detail_y,
+      scr_w,
+      local_red_high and "[+] Teleporter (Red): HERE" or "[ ] Teleporter (Red): elsewhere",
+      local_red_high and 0xFFAA00 or 0x888888,
+      0x000000
+    )
+    detail_y = detail_y + 1
+  end
+
+  local red_count = count_red_high()
+  if red_count > 1 then
+    detail_y = detail_y + 1
+    gpu.setForeground(0xFF4444)
+    draw_text_centered(
+      1,
+      detail_y,
+      scr_w,
+      "CONFLICT: " .. red_count .. " nodes hold Red high (expected 0 or 1)",
+      0xFF4444,
+      0x000000
+    )
+    detail_y = detail_y + 1
+    gpu.setForeground(0xCCCCCC)
+    for _, p in pairs(peers) do
+      if p.online and p.has_tp then
+        draw_text_centered(1, detail_y, scr_w, "  - " .. p.name, 0xCCCCCC, 0x000000)
+        detail_y = detail_y + 1
+      end
+    end
+    if local_black_high and local_red_high then
+      draw_text_centered(1, detail_y, scr_w, "  - " .. MY_NAME .. " (this node)", 0xCCCCCC, 0x000000)
+      detail_y = detail_y + 1
+    end
+  end
+
+  gpu.setForeground(0x555555)
+  draw_text_centered(
+    1,
+    scr_h,
+    scr_w,
+    "Fix the hardware/wiring and the screen will recover automatically",
+    0x555555,
+    0x000000
+  )
+end
+
+-- ---------------------------------------------------------------------------
 -- Hit-testing and input handling
 -- ---------------------------------------------------------------------------
 
@@ -1488,6 +1677,9 @@ local function shutdown()
   if key_listener then
     event.cancel(key_listener)
   end
+  if redstone_listener then
+    event.cancel(redstone_listener)
+  end
 
   if modem then
     pcall(send_msg, { t = MT.BYE, s = MY_ADDR, n = MY_NAME })
@@ -1511,10 +1703,17 @@ local function main()
 
   touch_listener = event.listen("touch", on_touch)
   key_listener = event.listen("key_down", on_key)
+  redstone_listener = event.listen("redstone_changed", function()
+    refresh_rs_state()
+  end)
 
   hb_timer = event.timer(HEARTBEAT_INTERVAL, heartbeat, math.huge)
-  refresh_timer = event.timer(1, refresh_peer_status, math.huge)
+  refresh_timer = event.timer(1, function()
+    refresh_rs_state()
+    refresh_peer_status()
+  end, math.huge)
 
+  refresh_rs_state()
   discover()
   discover_timer = event.timer(60, discover, math.huge)
 
@@ -1523,7 +1722,10 @@ local function main()
   while true do
     if force_redraw then
       gpu.setActiveBuffer(back_buf)
-      if rename_mode then
+      local unhealthy, reason = check_health()
+      if unhealthy then
+        render_unhealthy(reason)
+      elseif rename_mode then
         render_rename()
       elseif APP_STATE == "IDLE" then
         render_normal()
