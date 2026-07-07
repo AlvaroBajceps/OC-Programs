@@ -1,5 +1,5 @@
 --AlvaroBajceps 2026
-local version = "2.3.0"
+local version = "2.3.0-dev"
 
 local _lap = require("ab_lapotron")
 local _kfc = require("ab_kalman")
