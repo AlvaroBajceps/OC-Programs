@@ -57,6 +57,7 @@ local OUTCOME = {
   LOST_SYNC = "lostsync",
   DEST_UNREACHABLE = "destgone",
   NETWORK_CANCEL = "netcancel",
+  HW_FAULT = "hwfault",
 }
 
 -- Short single-char tags for payload efficiency.
@@ -343,13 +344,14 @@ end
 -- Peer tracking
 -- ---------------------------------------------------------------------------
 
-local function peer_beat(addr, name, modem_addr, has_tp)
+local function peer_beat(addr, name, modem_addr, has_tp, healthy)
   if addr == MY_ADDR then
     return
   end
   if name then
     name = name:sub(1, MAX_NAME_LEN)
   end
+  local new_healthy = healthy ~= false
   if not peers[addr] then
     peers[addr] = {
       name = name or ("Node-" .. addr:sub(1, 6)),
@@ -357,6 +359,7 @@ local function peer_beat(addr, name, modem_addr, has_tp)
       online = true,
       modem_addr = modem_addr,
       has_tp = has_tp == true,
+      healthy = new_healthy,
     }
     force_redraw = true
   else
@@ -372,6 +375,10 @@ local function peer_beat(addr, name, modem_addr, has_tp)
     local new_tp = has_tp == true
     if peers[addr].has_tp ~= new_tp then
       peers[addr].has_tp = new_tp
+      force_redraw = true
+    end
+    if peers[addr].healthy ~= new_healthy then
+      peers[addr].healthy = new_healthy
       force_redraw = true
     end
   end
@@ -409,7 +416,7 @@ end
 local function all_peers_sorted()
   local t = {}
   for addr, p in pairs(peers) do
-    t[#t + 1] = { addr = addr, name = p.name, online = p.online }
+    t[#t + 1] = { addr = addr, name = p.name, online = p.online, healthy = p.healthy }
   end
   table.sort(t, function(a, b)
     return a.name < b.name
@@ -426,11 +433,20 @@ local function random_delay(min_sec, max_sec)
 end
 
 local function discover()
-  send_msg({ t = MT.HELLO, s = MY_ADDR, n = MY_NAME, rh = local_red_high })
+  local unhealthy = check_health()
+  send_msg({ t = MT.HELLO, s = MY_ADDR, n = MY_NAME, rh = local_red_high, hl = not unhealthy })
 end
 
 local function heartbeat()
-  send_msg({ t = MT.HB, s = MY_ADDR, n = MY_NAME, ts = computer.uptime(), rh = local_red_high })
+  local unhealthy = check_health()
+  send_msg({
+    t = MT.HB,
+    s = MY_ADDR,
+    n = MY_NAME,
+    ts = computer.uptime(),
+    rh = local_red_high,
+    hl = not unhealthy,
+  })
 end
 
 local function broadcast_rename()
@@ -714,6 +730,19 @@ local function request_teleport(dest_addr)
   end, 1)
 end
 
+local function abort_if_unhealthy()
+  if APP_STATE ~= "COUNTDOWN_LOCAL" and APP_STATE ~= "COUNTDOWN_REMOTE" and APP_STATE ~= "REQUESTING" then
+    return
+  end
+  local unhealthy, reason = check_health()
+  if not unhealthy then
+    return
+  end
+  local full_reason = "Hardware fault: " .. (reason or "unknown")
+  local is_initiator = (APP_STATE == "COUNTDOWN_LOCAL" or APP_STATE == "REQUESTING")
+  abort_teleport(OUTCOME.HW_FAULT, full_reason, true, is_initiator)
+end
+
 -- ---------------------------------------------------------------------------
 -- Incoming message handler
 -- ---------------------------------------------------------------------------
@@ -734,13 +763,21 @@ local function handle_message(remote_addr, port, payload)
 
   if msg.t == MT.HELLO then
     event.timer(random_delay(1, 5), function()
-      send_msg({ t = MT.PONG, s = MY_ADDR, n = MY_NAME, d = src, rh = local_red_high }, remote_addr)
+      local unhealthy = check_health()
+      send_msg({
+        t = MT.PONG,
+        s = MY_ADDR,
+        n = MY_NAME,
+        d = src,
+        rh = local_red_high,
+        hl = not unhealthy,
+      }, remote_addr)
     end, 1)
-    peer_beat(src, msg.n, remote_addr, msg.rh)
+    peer_beat(src, msg.n, remote_addr, msg.rh, msg.hl)
     return
   end
   if msg.t == MT.HB then
-    peer_beat(src, msg.n, remote_addr, msg.rh)
+    peer_beat(src, msg.n, remote_addr, msg.rh, msg.hl)
     return
   end
   if msg.t == MT.BYE then
@@ -754,7 +791,7 @@ local function handle_message(remote_addr, port, payload)
     return
   end
   if msg.t == MT.PONG then
-    peer_beat(src, msg.n, remote_addr, msg.rh)
+    peer_beat(src, msg.n, remote_addr, msg.rh, msg.hl)
     return
   end
   if msg.t == MT.RENAME then
@@ -765,6 +802,20 @@ local function handle_message(remote_addr, port, payload)
   if msg.t == MT.TP_REQ then
     if APP_STATE ~= "IDLE" or rename_mode then
       send_msg({ t = MT.TP_ACK, s = MY_ADDR, d = src, id = msg.id, ok = false, pwr = 0 }, remote_addr)
+      return
+    end
+    local unhealthy, reason = check_health()
+    if unhealthy then
+      send_msg({
+        t = MT.TP_ACK,
+        s = MY_ADDR,
+        d = src,
+        id = msg.id,
+        ok = false,
+        pwr = 0,
+        oc = OUTCOME.HW_FAULT,
+        why = "Destination hardware fault: " .. (reason or "unknown"),
+      }, remote_addr)
       return
     end
     local our_power = get_ae_power()
@@ -788,7 +839,9 @@ local function handle_message(remote_addr, port, payload)
       return
     end
     if not msg.ok then
-      abort_teleport(OUTCOME.REFUSED, "Destination refused or insufficient power", true, true)
+      local outcome_code = msg.oc or OUTCOME.REFUSED
+      local why = msg.why or "Destination refused or insufficient power"
+      abort_teleport(outcome_code, why, true, true)
       return
     end
     start_countdown(MY_ADDR, src, msg.id, true, msg.pwr or 0, true)
@@ -999,30 +1052,34 @@ local function render_normal()
         local bg_color
         local name_fg
         local status_fg
-        if peer.online then
-          if is_sel then
-            border_color = 0x00DD00
-            bg_color = 0x003300
-            name_fg = 0x00FF00
-            status_fg = 0x00FF00
-          else
-            border_color = 0x008800
-            bg_color = 0x000000
-            name_fg = 0xCCFFCC
-            status_fg = 0x00AA00
-          end
-        else
+        if not peer.online then
           border_color = 0x444444
           bg_color = 0x000000
           name_fg = 0x666666
           status_fg = 0x555555
+        elseif not peer.healthy then
+          border_color = 0xDD0000
+          bg_color = 0x220000
+          name_fg = 0xFFAAAA
+          status_fg = 0xFF4444
+        elseif is_sel then
+          border_color = 0x00DD00
+          bg_color = 0x003300
+          name_fg = 0x00FF00
+          status_fg = 0x00FF00
+        else
+          border_color = 0x008800
+          bg_color = 0x000000
+          name_fg = 0xCCFFCC
+          status_fg = 0x00AA00
         end
         draw_box(bx, by, box_w, box_h, border_color, bg_color)
         gpu.setBackground(bg_color)
         gpu.setForeground(name_fg)
         draw_text_centered(bx, by + 1, box_w, peer.name, name_fg, bg_color)
         gpu.setForeground(status_fg)
-        draw_text_centered(bx, by + 2, box_w, peer.online and " LIVE " or "OFFLINE", status_fg, bg_color)
+        local status_text = peer.online and (peer.healthy and " LIVE " or "UNHEALTHY") or "OFFLINE"
+        draw_text_centered(bx, by + 2, box_w, status_text, status_fg, bg_color)
         if peer.addr == MY_ADDR then
           gpu.setForeground(0x888888)
           draw_text_centered(bx, by + 3, box_w, "(you)", 0x888888, bg_color)
@@ -1055,16 +1112,23 @@ local function render_normal()
   gpu.set(scr_w - 5, status_y, power_ok and " OK " or " LOW")
 
   local live_count = 0
+  local unhealthy_count = 0
   local offline_count = 0
   for _, p in pairs(peers) do
-    if p.online then
-      live_count = live_count + 1
-    else
+    if not p.online then
       offline_count = offline_count + 1
+    elseif not p.healthy then
+      unhealthy_count = unhealthy_count + 1
+    else
+      live_count = live_count + 1
     end
   end
   gpu.setForeground(0x888888)
-  gpu.set(2, status_y + 1, string.format("Peers: %d live / %d offline", live_count, offline_count))
+  local peers_line = string.format("Peers: %d live / %d offline", live_count, offline_count)
+  if unhealthy_count > 0 then
+    peers_line = peers_line .. string.format(" / %d unhealthy", unhealthy_count)
+  end
+  gpu.set(2, status_y + 1, peers_line)
 
   local state_text = "Ready"
   if #sorted == 0 then
@@ -1371,6 +1435,9 @@ local function outcome_label(code)
   end
   if code == OUTCOME.USER_CANCEL then
     return "TELEPORT CANCELED", 0xFFAA00, 0x332200
+  end
+  if code == OUTCOME.HW_FAULT then
+    return "HARDWARE FAULT", 0xFF4444, 0x330000
   end
   return "TELEPORT FAILED", 0xFF4444, 0x330000
 end
@@ -1744,6 +1811,7 @@ local function main()
       pcall(shutdown)
       return
     end
+    abort_if_unhealthy()
   end
 end
 
