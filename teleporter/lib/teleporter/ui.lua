@@ -266,14 +266,7 @@ return function(deps)
     local src_name = peer_name(st.tp_active_src)
     local dest_name = peer_name(st.tp_active_dest)
 
-    local role
-    if st.state == "COUNTDOWN_LOCAL" then
-      role = "sender"
-    elseif st.tp_active_dest == config.MY_ADDR then
-      role = "receiver"
-    else
-      role = "bystander"
-    end
+    local role = st.tp_role or "bystander"
 
     local bg_color, banner_fg, banner_bg, prominent_fg, bar_color, bar_alt
     local banner_text, prominent_text

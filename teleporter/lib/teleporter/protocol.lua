@@ -41,6 +41,7 @@ return function(deps)
   local cooldown_remaining = 0
   local cooldown_total = config.COOLDOWN_DURATION
   local cooldown_authority = false
+  local tp_role = nil
 
   local countdown_timer = nil
   local cooldown_timer = nil
@@ -83,6 +84,7 @@ return function(deps)
     tp_dest_power_ok = false
     tp_dest_power_val = 0
     tp_dest_power_ts = 0
+    tp_role = nil
   end
 
   local abort_teleport
@@ -254,6 +256,7 @@ return function(deps)
     tp_dest_power_val = dest_power_val
     tp_dest_power_ts = computer.uptime()
     APP_STATE = is_local and "COUNTDOWN_LOCAL" or "COUNTDOWN_REMOTE"
+    tp_role = is_local and "sender" or "receiver"
 
     if is_local then
       tp_src_power_val = ae2.get_power()
@@ -455,6 +458,7 @@ return function(deps)
         tp_dest_power_val = 0
         tp_dest_power_ts = 0
         APP_STATE = "COUNTDOWN_REMOTE"
+        tp_role = "bystander"
         app.dirty = true
       elseif msg.id == tp_active_seq and APP_STATE == "COUNTDOWN_REMOTE" then
         tp_countdown_remaining = msg.rem or tp_countdown_remaining
@@ -589,6 +593,7 @@ return function(deps)
       cooldown_remaining = cooldown_remaining,
       cooldown_total = cooldown_total,
       cooldown_authority = cooldown_authority,
+      tp_role = tp_role,
     }
   end
 
