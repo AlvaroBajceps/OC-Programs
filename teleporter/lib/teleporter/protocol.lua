@@ -166,9 +166,9 @@ return function(deps)
       s = config.MY_ADDR,
       id = seq,
       oc = OUTCOME.CONFIRMED,
-      why = "Teleportation confirmed",
+      why = "Warp completed",
     })
-    start_cooldown(OUTCOME.CONFIRMED, "Teleportation confirmed", seq, true)
+    start_cooldown(OUTCOME.CONFIRMED, "Warp completed", seq, true)
     peers.clear_selected()
   end
 
@@ -334,6 +334,12 @@ return function(deps)
     end
     local unhealthy, reason = redstone.check_health()
     if not unhealthy then
+      return
+    end
+    -- Only the source and destination may abort; an observer that happens to
+    -- have its own hardware fault must not broadcast TP_ABORT and kill an
+    -- unrelated teleport between two other nodes.
+    if APP_STATE == "COUNTDOWN_REMOTE" and tp_active_dest ~= config.MY_ADDR then
       return
     end
     local full_reason = "Hardware fault: " .. (reason or "unknown")
@@ -562,7 +568,7 @@ return function(deps)
 
   local function abort_user_cancel()
     local is_auth = (APP_STATE == "REQUESTING" or APP_STATE == "COUNTDOWN_LOCAL")
-    abort_teleport(OUTCOME.USER_CANCEL, "Cancelled by user", true, is_auth)
+    abort_teleport(OUTCOME.USER_CANCEL, "Cancelled by " .. config.get_name(), true, is_auth)
   end
 
   local function snapshot()
