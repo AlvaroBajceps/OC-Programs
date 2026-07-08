@@ -33,15 +33,15 @@ return function(deps)
 
   local function outcome_label(code)
     if code == OUTCOME.CONFIRMED then
-      return "TELEPORT CONFIRMED", 0x00FF66, 0x003311
+      return "WARP COMPLETE", 0x00FF66, 0x003311
     end
     if code == OUTCOME.USER_CANCEL then
-      return "TELEPORT CANCELED", 0xFFAA00, 0x332200
+      return "WARP CANCELLED", 0xFFAA00, 0x332200
     end
     if code == OUTCOME.HW_FAULT then
       return "HARDWARE FAULT", 0xFF4444, 0x330000
     end
-    return "TELEPORT FAILED", 0xFF4444, 0x330000
+    return "WARP FAILED", 0xFF4444, 0x330000
   end
 
   local function render_normal()
@@ -192,7 +192,7 @@ return function(deps)
 
     local btn_y = scr_h - 2
     local btn_h = 3
-    local btn_text = " REQUEST TELEPORTER "
+    local btn_text = " INITIATE WARP "
     local btn_w = #btn_text + 4
     local btn_x = math.floor((scr_w - btn_w) / 2)
     local btn_enabled = (
@@ -224,13 +224,13 @@ return function(deps)
     gpu.setBackground(0x002200)
     gpu.setForeground(0x00FF00)
     gpu.fill(1, 1, scr_w, 1, " ")
-    display.draw_text_centered(1, 1, scr_w, " REQUESTING TELEPORT... ", 0x00FF00, 0x002200)
+    display.draw_text_centered(1, 1, scr_w, " REQUESTING WARP... ", 0x00FF00, 0x002200)
 
     local dest_name = st.tp_active_dest and peers.get(st.tp_active_dest) and peers.get(st.tp_active_dest).name
       or "unknown"
     gpu.setBackground(0x000000)
     gpu.setForeground(0xFFFFFF)
-    display.draw_text_centered(1, 5, scr_w, "Destination: " .. dest_name, 0xFFFFFF, 0x000000)
+    display.draw_text_centered(1, 5, scr_w, "WARP TO: " .. dest_name, 0xFFFFFF, 0x000000)
     gpu.setForeground(0x888888)
     display.draw_text_centered(1, 7, scr_w, "Awaiting destination confirmation...", 0x888888, 0x000000)
     display.draw_text_centered(1, 8, scr_w, "Checking power availability...", 0x888888, 0x000000)
@@ -251,79 +251,145 @@ return function(deps)
 
   local function render_countdown(st)
     hit_regions = {}
-    gpu.setBackground(0x1A0000)
+
+    local function peer_name(addr)
+      if not addr then
+        return "unknown"
+      end
+      if addr == config.MY_ADDR then
+        return config.get_name()
+      end
+      local p = peers.get(addr)
+      return (p and p.name) or "unknown"
+    end
+
+    local src_name = peer_name(st.tp_active_src)
+    local dest_name = peer_name(st.tp_active_dest)
+
+    local role
+    if st.state == "COUNTDOWN_LOCAL" then
+      role = "sender"
+    elseif st.tp_active_dest == config.MY_ADDR then
+      role = "receiver"
+    else
+      role = "bystander"
+    end
+
+    local bg_color, banner_fg, banner_bg, prominent_fg, bar_color, bar_alt
+    local banner_text, prominent_text
+
+    if role == "sender" then
+      bg_color = 0x0A1A0A
+      banner_fg = 0x00FF00
+      banner_bg = 0x003300
+      prominent_fg = 0x00FF66
+      bar_color = 0x00CC00
+      bar_alt = 0x008800
+      banner_text = " OUTBOUND WARP "
+      prominent_text = "WARPING TO: " .. dest_name
+    elseif role == "receiver" then
+      bg_color = 0x0A1A1A
+      banner_fg = 0x00BFFF
+      banner_bg = 0x003344
+      prominent_fg = 0x00CCFF
+      bar_color = 0x00BFFF
+      bar_alt = 0x007799
+      banner_text = " INCOMING WARP "
+      prominent_text = "WARP IN FROM: " .. src_name
+    else
+      bg_color = 0x1A1A0A
+      banner_fg = 0xFFAA00
+      banner_bg = 0x332200
+      prominent_fg = 0xFFCC00
+      bar_color = 0xFFAA00
+      bar_alt = 0x886600
+      banner_text = " WARP IN PROGRESS "
+      prominent_text = src_name .. "  \226\150\182  " .. dest_name
+    end
+
+    gpu.setBackground(bg_color)
     gpu.fill(1, 1, scr_w, scr_h, " ")
 
-    gpu.setBackground(0x330000)
-    gpu.setForeground(0xFF4444)
+    gpu.setBackground(banner_bg)
+    gpu.setForeground(banner_fg)
     gpu.fill(1, 1, scr_w, 1, " ")
-    display.draw_text_centered(1, 1, scr_w, " WARNING: TELEPORTATION IN PROGRESS ", 0xFF4444, 0x330000)
+    display.draw_text_centered(1, 1, scr_w, banner_text, banner_fg, banner_bg)
 
-    local src_name = config.get_name()
-    if st.tp_active_src and peers.get(st.tp_active_src) then
-      src_name = peers.get(st.tp_active_src).name
-    end
-    local dest_name = ""
-    if st.tp_active_dest and peers.get(st.tp_active_dest) then
-      dest_name = peers.get(st.tp_active_dest).name
-    elseif st.tp_active_dest == config.MY_ADDR then
-      dest_name = config.get_name()
-    end
-    gpu.setBackground(0x1A0000)
-    gpu.setForeground(0xFFAA00)
-    display.draw_text_centered(1, 3, scr_w, src_name .. "  \226\150\182  " .. dest_name, 0xFFAA00, 0x1A0000)
+    gpu.setBackground(bg_color)
+    gpu.setForeground(prominent_fg)
+    display.draw_text_centered(1, 3, scr_w, prominent_text, prominent_fg, bg_color)
 
     local bar_x = math.floor(scr_w / 2) - 15
     local bar_y = 7
-    gpu.setBackground(0x330000)
+    gpu.setBackground(banner_bg)
     gpu.fill(bar_x, bar_y, 30, 3, " ")
 
     local pct = st.tp_countdown_remaining / config.COUNTDOWN_DURATION
     local fill_w = math.floor(30 * pct)
     if fill_w > 0 then
-      gpu.setBackground(pct > 0.3 and 0xFF0000 or 0xFF4400)
+      gpu.setBackground(pct > 0.3 and bar_color or bar_alt)
       gpu.fill(bar_x, bar_y, fill_w, 3, " ")
     end
+
+    gpu.setBackground(bg_color)
+    gpu.setForeground(prominent_fg)
+    display.draw_text_centered(1, 6, scr_w, tostring(st.tp_countdown_remaining), prominent_fg, bg_color)
 
     gpu.setBackground(0x000000)
     gpu.setForeground(0xFFFFFF)
     display.draw_text_centered(1, bar_y + 1, scr_w, "COUNTDOWN: " .. st.tp_countdown_remaining, 0xFFFFFF, 0x000000)
 
-    gpu.setForeground(0xFF2222)
-    gpu.setBackground(0x1A0000)
-    display.draw_text_centered(1, 6, scr_w, tostring(st.tp_countdown_remaining), 0xFF2222, 0x1A0000)
-
     local dest_stale = st.tp_dest_power_ts == 0 or (computer.uptime() - st.tp_dest_power_ts) > config.POWER_STALE_SEC
+
+    local src_label, dest_label
+    if role == "sender" then
+      src_label = "MY POWER:   "
+      dest_label = "DEST POWER: "
+    elseif role == "receiver" then
+      src_label = "SOURCE POWER: "
+      dest_label = "MY POWER:     "
+    else
+      src_label = "SOURCE POWER: "
+      dest_label = "DEST POWER:   "
+    end
+
     gpu.setForeground(0xAAAAAA)
-    gpu.setBackground(0x1A0000)
+    gpu.setBackground(bg_color)
     display.draw_text_centered(
       1,
       12,
       scr_w,
       string.format(
-        "Source Power: %s %.1fM AE (%s)",
+        "%s%s %.1fM AE (%s)",
+        src_label,
         st.tp_src_power_ok and "\226\156\148" or "\226\156\150",
         st.tp_src_power_val / 1000000,
         st.tp_src_power_ok and "OK" or "INSUFFICIENT"
       ),
       st.tp_src_power_ok and 0x00FF00 or 0xFF4444,
-      0x1A0000
+      bg_color
     )
     display.draw_text_centered(
       1,
       13,
       scr_w,
       string.format(
-        "Dest Power:   %s %.1fM AE (%s%s)",
+        "%s%s %.1fM AE (%s%s)",
+        dest_label,
         st.tp_dest_power_ok and "\226\156\148" or "\226\156\150",
         st.tp_dest_power_val / 1000000,
         st.tp_dest_power_ok and "OK" or "INSUFFICIENT",
         dest_stale and " - STALE" or ""
       ),
       st.tp_dest_power_ok and 0x00FF00 or 0xFF4444,
-      0x1A0000
+      bg_color
     )
-    display.draw_text_centered(1, 14, scr_w, "Dest Confirmed: \226\156\148", 0x00FF00, 0x1A0000)
+
+    if role == "sender" then
+      display.draw_text_centered(1, 14, scr_w, "Dest Confirmed: \226\156\148", 0x00FF00, bg_color)
+    elseif role == "receiver" then
+      display.draw_text_centered(1, 14, scr_w, "Source Confirmed: \226\156\148", 0x00FF00, bg_color)
+    end
 
     local cancel_y = scr_h - 3
     local cancel_w = 20
@@ -338,8 +404,8 @@ return function(deps)
       y2 = cancel_y + 2,
     }
     gpu.setForeground(0x888888)
-    gpu.setBackground(0x1A0000)
-    display.draw_text_centered(1, scr_h, scr_w, "Press CANCEL on any network computer to abort", 0x888888, 0x1A0000)
+    gpu.setBackground(bg_color)
+    display.draw_text_centered(1, scr_h, scr_w, "Press CANCEL on any network computer to abort", 0x888888, bg_color)
   end
 
   local function render_rename()
