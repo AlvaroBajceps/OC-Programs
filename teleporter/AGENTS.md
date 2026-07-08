@@ -6,6 +6,23 @@ workspace-wide toolchain and workflow rules; everything there (Lua 5.2,
 selene/stylua/LuaLS mandatory run, no AI-slop comments, vendored stubs)
 applies here too.
 
+## Repository and commit policy
+
+`src/OC-Programs/` is a **separate, nested git repository** — not a
+submodule of the workspace root. Teleporter commits go to the OC-Programs
+repo (`git -C src/OC-Programs ...`), never to the root repo. The root repo
+sees `src/OC-Programs/` as untracked and must not stage it.
+
+**Auto-commit**: when developing the teleporter, always write commits
+automatically once your changes pass the mandatory workflow
+(selene + stylua + lua-language-server). This overrides the root
+`AGENTS.md` rule "Never push, commit, tag, or amend without an explicit
+user instruction" — for the teleporter, committing is part of the
+development loop, not something to ask permission for. Write atomic commits
+(one logical change each) following the `Teleporter: <description>` message
+convention already in the log. **Pushing** still requires an explicit user
+instruction.
+
 ## Vocabulary (read this before touching the UI or protocol)
 
 A single teleportation event is called a **warp** in user-facing strings
