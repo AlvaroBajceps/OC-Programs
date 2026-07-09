@@ -361,7 +361,8 @@ return function(deps)
       if countdown_timer then
         event.cancel(countdown_timer)
       end
-      countdown_timer = event.timer(1, function()
+      local tick = config.COUNTDOWN_TICK_INTERVAL
+      countdown_timer = event.timer(tick, function()
         local our_power = ae2.get_power()
         tp_src_power_val = our_power
         tp_src_power_ok = our_power >= config.AE_POWER_REQUIRED
@@ -370,7 +371,7 @@ return function(deps)
           abort_teleport(OUTCOME.SRC_POWER, "Source power dropped below threshold", true, true)
           return
         end
-        tp_countdown_remaining = tp_countdown_remaining - 1
+        tp_countdown_remaining = tp_countdown_remaining - tick
         if tp_countdown_remaining > 0 then
           broadcast_tp_sync(seq, tp_countdown_remaining, config.COUNTDOWN_DURATION)
         end
@@ -379,7 +380,7 @@ return function(deps)
           countdown_timer = nil
           fire_teleport()
         end
-      end, config.COUNTDOWN_DURATION)
+      end, math.floor(config.COUNTDOWN_DURATION / tick))
     else
       tp_src_power_val = 0
       tp_src_power_ok = false

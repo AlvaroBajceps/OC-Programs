@@ -45,6 +45,10 @@ return function()
     OFFLINE_TIMEOUT = 150,
     COOLDOWN_DURATION = 15,
     COUNTDOWN_DURATION = 10,
+    -- TP_SYNC re-broadcast cadence (sender is the sole transmitter, so 4 Hz is
+    -- cheap). Must evenly divide COUNTDOWN_DURATION, else the float countdown
+    -- never lands on exactly 0 and the fire trigger breaks.
+    COUNTDOWN_TICK_INTERVAL = 0.25,
     AE_POWER_REQUIRED = 900000,
     MAX_NAME_LEN = MAX_NAME_LEN,
     NAME_FILE = NAME_FILE,

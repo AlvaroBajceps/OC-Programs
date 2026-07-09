@@ -400,11 +400,7 @@ return function(deps)
 
     gpu.setBackground(bg_color)
     gpu.setForeground(prominent_fg)
-    display.draw_text_centered(1, 6, scr_w, tostring(st.tp_countdown_remaining), prominent_fg, bg_color)
-
-    gpu.setBackground(0x000000)
-    gpu.setForeground(0xFFFFFF)
-    display.draw_text_centered(1, bar_y + 1, scr_w, "COUNTDOWN: " .. st.tp_countdown_remaining, 0xFFFFFF, 0x000000)
+    display.draw_text_centered(1, 6, scr_w, "T-" .. math.ceil(st.tp_countdown_remaining), prominent_fg, bg_color)
 
     local dest_stale = st.tp_dest_power_ts == 0 or (computer.uptime() - st.tp_dest_power_ts) > config.POWER_STALE_SEC
 
