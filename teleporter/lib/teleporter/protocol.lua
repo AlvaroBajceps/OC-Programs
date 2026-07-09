@@ -1,8 +1,8 @@
 -- Teleport protocol state machine and wire-message handling.
 -- Drives the full lifecycle: peer discovery (HELLO/HB/PONG/BYE), name
 -- propagation (RENAME), chamber summon (TP_SUMMON), and the teleport
--- handshake (TP_REQ -> TP_ACK -> TP_SYNC/TP_PWR countdown ->
--- TP_DONE/TP_ABORT -> TP_COOL cooldown).
+-- handshake (TP_REQ -> TP_ACK -> TP_SYNC/TP_PWR countdown -> TP_FIRE ->
+-- chamber-arrival confirmation -> TP_DONE/TP_ABORT -> TP_COOL cooldown).
 --
 -- Only the node holding the warp chamber (Red signal high) may be the warp
 -- sender. It can initiate a warp to any online destination directly via
@@ -10,10 +10,16 @@
 -- sends TP_SUMMON to the chamber holder; the holder then initiates the
 -- normal TP_REQ handshake back to the summoner (who becomes the receiver).
 --
+-- At countdown zero the sender broadcasts TP_FIRE and enters CONFIRMING.
+-- The receiver detects chamber arrival via Red signal going high, then
+-- broadcasts TP_DONE to transition all nodes to cooldown. If the chamber
+-- does not arrive within CONFIRM_TIMEOUT, the sender enters RECOVERING
+-- (failover hook), then broadcasts TP_DONE with CHAMBER_LOST outcome.
+--
 -- Owns all FSM state and every protocol-internal timer; exposes a snapshot
 -- of that state for the UI to render, plus entry points for user actions
 -- (request_teleport, summon_chamber, abort_user_cancel) and periodic tasks
--- (discover, heartbeat).
+-- (discover, heartbeat, check_chamber_arrival).
 
 local computer = require("computer")
 local event = require("event")
@@ -59,6 +65,8 @@ return function(deps)
   local dest_hang_timer = nil
   local request_timeout_timer = nil
   local remote_cooldown_timer = nil
+  local confirm_timer = nil
+  local recovery_timer = nil
 
   local function next_seq()
     tp_seq = tp_seq + 1
@@ -81,6 +89,14 @@ return function(deps)
     if remote_cooldown_timer then
       event.cancel(remote_cooldown_timer)
       remote_cooldown_timer = nil
+    end
+    if confirm_timer then
+      event.cancel(confirm_timer)
+      confirm_timer = nil
+    end
+    if recovery_timer then
+      event.cancel(recovery_timer)
+      recovery_timer = nil
     end
   end
 
@@ -170,8 +186,35 @@ return function(deps)
     peers.clear_selected()
   end
 
-  local function complete_teleport()
+  local enter_recovery
+
+  local function fire_teleport()
     if app.shutting_down then
+      return
+    end
+    local seq = tp_active_seq
+    cancel_countdown_timers()
+    APP_STATE = "CONFIRMING"
+    app.dirty = true
+    modem.send({
+      t = MT.TP_FIRE,
+      s = config.MY_ADDR,
+      id = seq,
+      d = tp_active_dest,
+    })
+    confirm_timer = event.timer(config.CONFIRM_TIMEOUT, function()
+      confirm_timer = nil
+      if app.shutting_down then
+        return
+      end
+      if APP_STATE == "CONFIRMING" then
+        enter_recovery()
+      end
+    end, 1)
+  end
+
+  local function confirm_chamber_arrival()
+    if APP_STATE ~= "CONFIRMING" or app.shutting_down then
       return
     end
     local seq = tp_active_seq
@@ -180,10 +223,50 @@ return function(deps)
       s = config.MY_ADDR,
       id = seq,
       oc = OUTCOME.CONFIRMED,
-      why = "Warp completed",
+      why = "Chamber confirmed at destination",
     })
     start_cooldown(OUTCOME.CONFIRMED, "Warp completed", seq, true)
     peers.clear_selected()
+  end
+
+  local function check_chamber_arrival()
+    if APP_STATE == "CONFIRMING" and tp_active_dest == config.MY_ADDR and redstone.is_red_high() then
+      confirm_chamber_arrival()
+    end
+  end
+
+  local function perform_recovery(seq)
+    if app.shutting_down then
+      return
+    end
+    modem.send({
+      t = MT.TP_DONE,
+      s = config.MY_ADDR,
+      id = seq,
+      oc = OUTCOME.CHAMBER_LOST,
+      why = "Chamber did not arrive within " .. config.CONFIRM_TIMEOUT .. "s",
+    })
+    start_cooldown(OUTCOME.CHAMBER_LOST, "Chamber did not arrive within " .. config.CONFIRM_TIMEOUT .. "s", seq, true)
+    peers.clear_selected()
+  end
+
+  enter_recovery = function()
+    APP_STATE = "RECOVERING"
+    tp_outcome = OUTCOME.CHAMBER_LOST
+    tp_outcome_reason = "Chamber did not arrive at destination"
+    tp_outcome_seq = tp_active_seq
+    app.dirty = true
+    if recovery_timer then
+      event.cancel(recovery_timer)
+    end
+    local seq = tp_active_seq
+    recovery_timer = event.timer(config.RECOVERY_DURATION, function()
+      recovery_timer = nil
+      if app.shutting_down then
+        return
+      end
+      perform_recovery(seq)
+    end, 1)
   end
 
   local function reset_sync_hang(seq)
@@ -294,7 +377,7 @@ return function(deps)
         app.dirty = true
         if tp_countdown_remaining <= 0 then
           countdown_timer = nil
-          complete_teleport()
+          fire_teleport()
         end
       end, config.COUNTDOWN_DURATION)
     else
@@ -395,21 +478,27 @@ return function(deps)
   end
 
   local function abort_if_unhealthy()
-    if APP_STATE ~= "COUNTDOWN_LOCAL" and APP_STATE ~= "COUNTDOWN_REMOTE" and APP_STATE ~= "REQUESTING" then
+    if
+      APP_STATE ~= "COUNTDOWN_LOCAL"
+      and APP_STATE ~= "COUNTDOWN_REMOTE"
+      and APP_STATE ~= "REQUESTING"
+      and APP_STATE ~= "CONFIRMING"
+    then
       return
     end
     local unhealthy, reason = redstone.check_health()
     if not unhealthy then
       return
     end
-    -- Only the source and destination may abort; an observer that happens to
-    -- have its own hardware fault must not broadcast TP_ABORT and kill an
-    -- unrelated teleport between two other nodes.
-    if APP_STATE == "COUNTDOWN_REMOTE" and tp_active_dest ~= config.MY_ADDR then
+    if
+      (APP_STATE == "COUNTDOWN_REMOTE" or APP_STATE == "CONFIRMING")
+      and tp_active_dest ~= config.MY_ADDR
+      and tp_active_src ~= config.MY_ADDR
+    then
       return
     end
     local full_reason = "Hardware fault: " .. (reason or "unknown")
-    local is_initiator = (APP_STATE == "COUNTDOWN_LOCAL" or APP_STATE == "REQUESTING")
+    local is_initiator = (APP_STATE == "COUNTDOWN_LOCAL" or APP_STATE == "REQUESTING" or APP_STATE == "CONFIRMING")
     abort_teleport(OUTCOME.HW_FAULT, full_reason, true, is_initiator)
   end
 
@@ -595,11 +684,42 @@ return function(deps)
       return
     end
 
+    if msg.t == MT.TP_FIRE then
+      if APP_STATE == "COUNTDOWN_REMOTE" and msg.id == tp_active_seq then
+        cancel_countdown_timers()
+        APP_STATE = "CONFIRMING"
+        app.dirty = true
+        local confirm_hang = config.CONFIRM_TIMEOUT + config.RECOVERY_DURATION + 5
+        sync_hang_timer = event.timer(confirm_hang, function()
+          sync_hang_timer = nil
+          if app.shutting_down then
+            return
+          end
+          if APP_STATE == "CONFIRMING" and tp_active_seq == msg.id then
+            abort_teleport(
+              OUTCOME.LOST_SYNC,
+              "No confirmation received (stuck in CONFIRMING for " .. confirm_hang .. "s)",
+              false,
+              false
+            )
+          end
+        end, 1)
+        if tp_active_dest == config.MY_ADDR and redstone.is_red_high() then
+          confirm_chamber_arrival()
+        end
+      end
+      return
+    end
+
     if msg.t == MT.TP_ABORT then
       local why = msg.why or "Cancelled by another peer"
       local outcome_code = msg.oc or OUTCOME.NETWORK_CANCEL
       if tp_active_seq and msg.id == tp_active_seq then
-        local was_initiator = (APP_STATE == "COUNTDOWN_LOCAL" or APP_STATE == "REQUESTING")
+        local was_initiator = (
+          APP_STATE == "COUNTDOWN_LOCAL"
+          or APP_STATE == "REQUESTING"
+          or (APP_STATE == "CONFIRMING" and tp_active_src == config.MY_ADDR)
+        )
         abort_teleport(outcome_code, why, false, was_initiator)
       elseif APP_STATE == "IDLE" then
         start_cooldown(outcome_code, why, msg.id, false)
@@ -608,7 +728,8 @@ return function(deps)
     end
 
     if msg.t == MT.TP_DONE then
-      local relevant = (APP_STATE == "COUNTDOWN_REMOTE" and msg.id == tp_active_seq) or APP_STATE == "IDLE"
+      local relevant = ((APP_STATE == "COUNTDOWN_REMOTE" or APP_STATE == "CONFIRMING") and msg.id == tp_active_seq)
+        or APP_STATE == "IDLE"
       if relevant then
         start_cooldown(msg.oc or OUTCOME.CONFIRMED, msg.why or "Teleportation confirmed", msg.id, false)
       end
@@ -724,6 +845,7 @@ return function(deps)
     handle_message = handle_message,
     request_teleport = request_teleport,
     summon_chamber = summon_chamber,
+    check_chamber_arrival = check_chamber_arrival,
     abort_user_cancel = abort_user_cancel,
     abort_if_unhealthy = abort_if_unhealthy,
     discover = discover,

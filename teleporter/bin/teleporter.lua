@@ -127,22 +127,29 @@ local function fatal(msg)
 end
 
 local function main()
+  local function refresh_redstone()
+    local prev_red = redstone.is_red_high()
+    redstone.refresh()
+    if redstone.is_red_high() ~= prev_red then
+      protocol.heartbeat()
+    end
+    protocol.check_chamber_arrival()
+  end
+
   modem_listener = event.listen("modem_message", function(_, _, remote_addr, port, _, payload)
     protocol.handle_message(remote_addr, port, payload)
   end)
   touch_listener = event.listen("touch", ui.on_touch)
   key_listener = event.listen("key_down", ui.on_key)
-  redstone_listener = event.listen("redstone_changed", function()
-    redstone.refresh()
-  end)
+  redstone_listener = event.listen("redstone_changed", refresh_redstone)
 
   hb_timer = event.timer(config.HEARTBEAT_INTERVAL, protocol.heartbeat, math.huge)
   refresh_timer = event.timer(1, function()
-    redstone.refresh()
+    refresh_redstone()
     peers.refresh_status()
   end, math.huge)
 
-  redstone.refresh()
+  refresh_redstone()
   protocol.discover()
   discover_timer = event.timer(60, protocol.discover, math.huge)
 

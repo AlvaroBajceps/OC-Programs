@@ -106,8 +106,13 @@ in `protocol.lua` and is exposed read-only via `protocol.snapshot()`.
 
 `IDLE` → `REQUESTING` (sender awaits `TP_ACK` after `TP_REQ`; or non-holder
 awaits `TP_REQ` after `TP_SUMMON` — tracked via `tp_summon_mode`) →
-`COUNTDOWN_LOCAL` (sender counts down, broadcasts `TP_SYNC`) → `COOLDOWN`
-(all nodes). Receivers and bystanders enter `COUNTDOWN_REMOTE` directly on
-the first `TP_SYNC`. Any countdown state can transition to `COOLDOWN` via
-`TP_ABORT` / `TP_DONE` / hardware fault / power loss. See `protocol.lua`
-header comment for the full message sequence.
+`COUNTDOWN_LOCAL` (sender counts down, broadcasts `TP_SYNC`) → `CONFIRMING`
+(sender broadcasts `TP_FIRE` at T-0, waits for chamber-arrival confirmation)
+→ `COOLDOWN` (all nodes). Receivers and bystanders enter `COUNTDOWN_REMOTE`
+directly on the first `TP_SYNC`, then `CONFIRMING` on `TP_FIRE`. The
+receiver detects Red signal going high (chamber arrived) and broadcasts
+`TP_DONE`; if the chamber doesn't arrive within `CONFIRM_TIMEOUT`, the
+sender enters `RECOVERING` (failover hook), then broadcasts `TP_DONE` with
+`CHAMBER_LOST` outcome. Any countdown/confirming state can transition to
+`COOLDOWN` via `TP_ABORT` / `TP_DONE` / hardware fault / power loss. See
+`protocol.lua` header comment for the full message sequence.

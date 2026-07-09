@@ -41,6 +41,9 @@ return function(deps)
     if code == OUTCOME.HW_FAULT then
       return "HARDWARE FAULT", 0xFF4444, 0x330000
     end
+    if code == OUTCOME.CHAMBER_LOST then
+      return "CHAMBER LOST", 0xFF4444, 0x330000
+    end
     return "WARP FAILED", 0xFF4444, 0x330000
   end
 
@@ -472,6 +475,77 @@ return function(deps)
     display.draw_text_centered(1, scr_h, scr_w, "Press CANCEL on any network computer to abort", 0x888888, bg_color)
   end
 
+  local function render_confirming(st)
+    hit_regions = {}
+    gpu.setBackground(0x000000)
+    gpu.fill(1, 1, scr_w, scr_h, " ")
+
+    gpu.setBackground(0x221800)
+    gpu.setForeground(0xFFAA00)
+    gpu.fill(1, 1, scr_w, 1, " ")
+    display.draw_text_centered(1, 1, scr_w, " CONFIRMING WARP... ", 0xFFAA00, 0x221800)
+
+    local function peer_name(addr)
+      if not addr then
+        return "unknown"
+      end
+      if addr == config.MY_ADDR then
+        return config.get_name()
+      end
+      local p = peers.get(addr)
+      return (p and p.name) or "unknown"
+    end
+
+    local is_sender = st.tp_active_src == config.MY_ADDR
+    local is_receiver = st.tp_active_dest == config.MY_ADDR
+    local dest_name = peer_name(st.tp_active_dest)
+    local src_name = peer_name(st.tp_active_src)
+
+    gpu.setBackground(0x000000)
+    gpu.setForeground(0xFFFFFF)
+    if is_sender then
+      display.draw_text_centered(1, 5, scr_w, "Awaiting chamber arrival at " .. dest_name, 0xFFFFFF, 0x000000)
+    elseif is_receiver then
+      display.draw_text_centered(1, 5, scr_w, "Awaiting chamber arrival...", 0xFFFFFF, 0x000000)
+    else
+      display.draw_text_centered(1, 5, scr_w, src_name .. "  \226\150\182  " .. dest_name, 0xFFFFFF, 0x000000)
+    end
+
+    gpu.setForeground(0xFFAA00)
+    display.draw_text_centered(1, 8, scr_w, "Chamber in transit", 0xFFAA00, 0x000000)
+
+    gpu.setForeground(0x888888)
+    display.draw_text_centered(1, 10, scr_w, "Warp has fired - waiting for Red signal confirmation", 0x888888, 0x000000)
+    display.draw_text_centered(1, 12, scr_w, "Timeout in " .. config.CONFIRM_TIMEOUT .. "s", 0x888888, 0x000000)
+  end
+
+  local function render_recovering(st)
+    hit_regions = {}
+    gpu.setBackground(0x000000)
+    gpu.fill(1, 1, scr_w, scr_h, " ")
+
+    gpu.setBackground(0x330000)
+    gpu.setForeground(0xFF4444)
+    gpu.fill(1, 1, scr_w, 3, " ")
+    display.draw_text_centered(1, 2, scr_w, " !! RECOVERING !! ", 0xFF4444, 0x330000)
+
+    gpu.setBackground(0x000000)
+    gpu.setForeground(0xFFAA00)
+    display.draw_text_centered(1, 6, scr_w, "Chamber did not arrive at destination", 0xFFAA00, 0x000000)
+
+    gpu.setForeground(0xFFFFFF)
+    local reason = st.tp_outcome_reason or ""
+    if #reason > scr_w - 4 then
+      reason = reason:sub(1, scr_w - 7) .. "..."
+    end
+    display.draw_text_centered(1, 8, scr_w, reason, 0xFFFFFF, 0x000000)
+
+    gpu.setForeground(0xCCCCCC)
+    display.draw_text_centered(1, 11, scr_w, "Initiating recovery sequence...", 0xCCCCCC, 0x000000)
+    gpu.setForeground(0x666666)
+    display.draw_text_centered(1, 13, scr_w, "Transitioning to cooldown", 0x666666, 0x000000)
+  end
+
   local function render_rename()
     hit_regions = {}
     gpu.setBackground(0x000000)
@@ -774,6 +848,10 @@ return function(deps)
         render_requesting(st)
       elseif st.state == "COUNTDOWN_LOCAL" or st.state == "COUNTDOWN_REMOTE" then
         render_countdown(st)
+      elseif st.state == "CONFIRMING" then
+        render_confirming(st)
+      elseif st.state == "RECOVERING" then
+        render_recovering(st)
       elseif st.state == "COOLDOWN" then
         render_cooldown(st)
       end

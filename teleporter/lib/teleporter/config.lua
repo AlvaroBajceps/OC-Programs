@@ -51,6 +51,8 @@ return function()
     SYNC_HANG_TIMEOUT = 5,
     DEST_HANG_TIMEOUT = 5,
     POWER_STALE_SEC = 3,
+    CONFIRM_TIMEOUT = 10,
+    RECOVERY_DURATION = 3,
     -- OC bundled-redstone color bit indices (ProjectRed / RedLogic compatible,
     -- match OpenOS colors.red / colors.black). Inlined to avoid a require for
     -- just two constants.
@@ -68,6 +70,7 @@ return function()
       NETWORK_CANCEL = "netcancel",
       HW_FAULT = "hwfault",
       NO_CHAMBER = "nochamber",
+      CHAMBER_LOST = "chamberlost",
     },
     -- Short single-char tags for payload efficiency on the wire.
     MT = {
@@ -83,6 +86,7 @@ return function()
       TP_DONE = "D",
       TP_COOL = "C",
       TP_SUMMON = "M",
+      TP_FIRE = "F",
       RENAME = "N",
     },
     MY_ADDR = MY_ADDR,
