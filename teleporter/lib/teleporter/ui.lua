@@ -454,6 +454,20 @@ return function(deps)
       display.draw_text_centered(1, 14, scr_w, "Source Confirmed: \226\156\148", 0x00FF00, bg_color)
     end
 
+    if role == "sender" then
+      if st.tp_stock_confirmed then
+        display.draw_text_centered(1, 15, scr_w, "Dest Stock: \226\156\148 Confirmed", 0x00FF00, bg_color)
+      else
+        display.draw_text_centered(1, 15, scr_w, "Dest Stock: \226\133\166 Pending", 0xFFAA00, bg_color)
+      end
+    elseif role == "receiver" then
+      if st.tp_stock_local then
+        display.draw_text_centered(1, 15, scr_w, "Local Stock: \226\156\148 Placed", 0x00FF00, bg_color)
+      else
+        display.draw_text_centered(1, 15, scr_w, "Local Stock: \226\133\166 Placing", 0xFFAA00, bg_color)
+      end
+    end
+
     local cancel_y = scr_h - 3
     local cancel_w = 20
     local cancel_x = math.floor((scr_w - cancel_w) / 2)
