@@ -67,6 +67,7 @@ return function()
       DEST_UNREACHABLE = "destgone",
       NETWORK_CANCEL = "netcancel",
       HW_FAULT = "hwfault",
+      NO_CHAMBER = "nochamber",
     },
     -- Short single-char tags for payload efficiency on the wire.
     MT = {
@@ -81,6 +82,7 @@ return function()
       TP_ABORT = "X",
       TP_DONE = "D",
       TP_COOL = "C",
+      TP_SUMMON = "M",
       RENAME = "N",
     },
     MY_ADDR = MY_ADDR,

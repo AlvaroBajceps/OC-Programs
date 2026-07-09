@@ -44,7 +44,9 @@ return function(deps)
     return "WARP FAILED", 0xFF4444, 0x330000
   end
 
-  local function render_normal()
+  local function render_normal(st)
+    local is_holder = st.has_chamber
+    local chamber_holder = st.chamber_holder
     hit_regions = {}
     gpu.setBackground(0x000000)
     gpu.fill(1, 1, scr_w, scr_h, " ")
@@ -93,7 +95,8 @@ return function(deps)
         local bx = margin + col * (box_w + gap)
         local by = list_y + row * (box_h + gap)
         if by + box_h - 1 <= list_y + 14 then
-          local is_sel = (peers.get_selected() == peer.addr)
+          local peer_has_chamber = (peer.addr == chamber_holder)
+          local is_sel = is_holder and (peers.get_selected() == peer.addr)
           local border_color
           local bg_color
           local name_fg
@@ -108,6 +111,11 @@ return function(deps)
             bg_color = 0x220000
             name_fg = 0xFFAAAA
             status_fg = 0xFF4444
+          elseif peer_has_chamber then
+            border_color = 0xFFAA00
+            bg_color = 0x221800
+            name_fg = 0xFFCC44
+            status_fg = 0xFFAA00
           elseif is_sel then
             border_color = 0x00DD00
             bg_color = 0x003300
@@ -126,19 +134,20 @@ return function(deps)
           gpu.setForeground(status_fg)
           local status_text = peer.online and (peer.healthy and " LIVE " or "UNHEALTHY") or "OFFLINE"
           display.draw_text_centered(bx, by + 2, box_w, status_text, status_fg, bg_color)
-          if peer.addr == config.MY_ADDR then
-            gpu.setForeground(0x888888)
-            display.draw_text_centered(bx, by + 3, box_w, "(you)", 0x888888, bg_color)
+          if peer_has_chamber then
+            display.draw_text_centered(bx, by + 3, box_w, "\226\151\134 CHAMBER", 0xFFAA00, bg_color)
           end
-          hit_regions[#hit_regions + 1] = {
-            type = "peer",
-            addr = peer.addr,
-            x1 = bx,
-            y1 = by,
-            x2 = bx + box_w - 1,
-            y2 = by + box_h - 1,
-            online = peer.online,
-          }
+          if is_holder and peer.online then
+            hit_regions[#hit_regions + 1] = {
+              type = "peer",
+              addr = peer.addr,
+              x1 = bx,
+              y1 = by,
+              x2 = bx + box_w - 1,
+              y2 = by + box_h - 1,
+              online = peer.online,
+            }
+          end
         end
       end
     end
@@ -180,34 +189,76 @@ return function(deps)
     end
     gpu.set(2, status_y + 1, peers_line)
 
+    local chamber_text, chamber_fg
+    if is_holder then
+      chamber_text = "Chamber: HERE"
+      chamber_fg = 0x00FF00
+    elseif chamber_holder then
+      local hp = peers.get(chamber_holder)
+      chamber_text = "Chamber: at " .. ((hp and hp.name) or "unknown")
+      chamber_fg = 0xFFAA00
+    else
+      chamber_text = "Chamber: IN TRANSIT"
+      chamber_fg = 0x888888
+    end
+    gpu.setForeground(chamber_fg)
+    gpu.set(scr_w - #chamber_text - 1, status_y + 1, chamber_text)
+
     local state_text = "Ready"
     if #sorted == 0 then
       state_text = "Discovering..."
-    elseif peers.get_selected() then
+    elseif is_holder and peers.get_selected() then
       local sel = peers.get(peers.get_selected())
       state_text = "Selected: " .. (sel and sel.name or "?")
+    elseif not is_holder and chamber_holder then
+      state_text = "Summon chamber to warp here"
+    elseif not is_holder then
+      state_text = "Waiting for chamber to arrive"
     end
     gpu.setForeground(0x00FF00)
     gpu.set(2, status_y + 2, "Status: " .. state_text)
 
     local btn_y = scr_h - 2
     local btn_h = 3
-    local btn_text = " INITIATE WARP "
+    local btn_text, btn_enabled, btn_action
+    if is_holder then
+      btn_text = " INITIATE WARP "
+      btn_enabled = (
+        peers.get_selected() ~= nil
+        and peers.get(peers.get_selected())
+        and peers.get(peers.get_selected()).online
+      )
+      btn_action = "request"
+    elseif chamber_holder then
+      btn_text = " CALL WARP "
+      btn_enabled = true
+      btn_action = "summon"
+    else
+      btn_text = " CHAMBER IN TRANSIT "
+      btn_enabled = false
+      btn_action = nil
+    end
     local btn_w = #btn_text + 4
     local btn_x = math.floor((scr_w - btn_w) / 2)
-    local btn_enabled = (
-      peers.get_selected() ~= nil
-      and peers.get(peers.get_selected())
-      and peers.get(peers.get_selected()).online
-    )
     local btn_fg = btn_enabled and 0x000000 or 0x666666
-    local btn_bg = btn_enabled and 0x00DD00 or 0x222222
-    local btn_border = btn_enabled and 0x00FF00 or 0x444444
+    local btn_bg, btn_border
+    if btn_enabled then
+      if is_holder then
+        btn_bg = 0x00DD00
+        btn_border = 0x00FF00
+      else
+        btn_bg = 0xCC8800
+        btn_border = 0xFFAA00
+      end
+    else
+      btn_bg = 0x222222
+      btn_border = 0x444444
+    end
     display.draw_filled_button(btn_x, btn_y - btn_h + 1, btn_w, btn_h, btn_text, btn_fg, btn_bg, btn_border)
     if btn_enabled then
       hit_regions[#hit_regions + 1] = {
         type = "button",
-        action = "request",
+        action = btn_action,
         x1 = btn_x,
         y1 = btn_y - btn_h + 1,
         x2 = btn_x + btn_w - 1,
@@ -221,19 +272,39 @@ return function(deps)
     gpu.setBackground(0x000000)
     gpu.fill(1, 1, scr_w, scr_h, " ")
 
-    gpu.setBackground(0x002200)
-    gpu.setForeground(0x00FF00)
-    gpu.fill(1, 1, scr_w, 1, " ")
-    display.draw_text_centered(1, 1, scr_w, " REQUESTING WARP... ", 0x00FF00, 0x002200)
+    local banner_text, banner_fg, banner_bg, main_text, sub_text1, sub_text2
 
-    local dest_name = st.tp_active_dest and peers.get(st.tp_active_dest) and peers.get(st.tp_active_dest).name
-      or "unknown"
+    if st.tp_summon_mode then
+      local holder = peers.get(st.tp_summon_target)
+      local holder_name = (holder and holder.name) or "unknown"
+      banner_text = " AWAITING WARP... "
+      banner_fg = 0xFFAA00
+      banner_bg = 0x221800
+      main_text = "SUMMONING CHAMBER FROM: " .. holder_name
+      sub_text1 = "Awaiting chamber holder response..."
+      sub_text2 = "Chamber will warp to this node"
+    else
+      local dest_name = st.tp_active_dest and peers.get(st.tp_active_dest) and peers.get(st.tp_active_dest).name
+        or "unknown"
+      banner_text = " REQUESTING WARP... "
+      banner_fg = 0x00FF00
+      banner_bg = 0x002200
+      main_text = "WARP TO: " .. dest_name
+      sub_text1 = "Awaiting destination confirmation..."
+      sub_text2 = "Checking power availability..."
+    end
+
+    gpu.setBackground(banner_bg)
+    gpu.setForeground(banner_fg)
+    gpu.fill(1, 1, scr_w, 1, " ")
+    display.draw_text_centered(1, 1, scr_w, banner_text, banner_fg, banner_bg)
+
     gpu.setBackground(0x000000)
     gpu.setForeground(0xFFFFFF)
-    display.draw_text_centered(1, 5, scr_w, "WARP TO: " .. dest_name, 0xFFFFFF, 0x000000)
+    display.draw_text_centered(1, 5, scr_w, main_text, 0xFFFFFF, 0x000000)
     gpu.setForeground(0x888888)
-    display.draw_text_centered(1, 7, scr_w, "Awaiting destination confirmation...", 0x888888, 0x000000)
-    display.draw_text_centered(1, 8, scr_w, "Checking power availability...", 0x888888, 0x000000)
+    display.draw_text_centered(1, 7, scr_w, sub_text1, 0x888888, 0x000000)
+    display.draw_text_centered(1, 8, scr_w, sub_text2, 0x888888, 0x000000)
 
     local cancel_y = scr_h - 3
     local cancel_w = 20
@@ -698,7 +769,7 @@ return function(deps)
     else
       local st = protocol.snapshot()
       if st.state == "IDLE" then
-        render_normal()
+        render_normal(st)
       elseif st.state == "REQUESTING" then
         render_requesting(st)
       elseif st.state == "COUNTDOWN_LOCAL" or st.state == "COUNTDOWN_REMOTE" then
@@ -763,6 +834,8 @@ return function(deps)
     elseif region.type == "button" then
       if region.action == "request" and peers.get_selected() and st.state == "IDLE" then
         protocol.request_teleport(peers.get_selected())
+      elseif region.action == "summon" and st.state == "IDLE" then
+        protocol.summon_chamber()
       elseif region.action == "cancel" then
         if st.state == "REQUESTING" or st.state == "COUNTDOWN_LOCAL" or st.state == "COUNTDOWN_REMOTE" then
           protocol.abort_user_cancel()

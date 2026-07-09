@@ -33,6 +33,22 @@ strings) for on-disk and network stability. When editing the UI, change the
 visible words to "warp"; when editing the protocol, leave the identifiers
 alone.
 
+### Warp chamber (elevator model)
+
+The network operates like an elevator: exactly one physical **warp chamber**
+(the teleporter entity) exists, shared by all nodes. The Red bundled-cable
+signal indicates the chamber's current location — high at the node where the
+chamber physically resides. At most one node may hold Red high at any time
+(2+ = hardware conflict / unhealthy). Zero Red signals means the chamber is
+in transit between nodes (transient, not a fault).
+
+Only the node holding the chamber (Red high locally, `redstone.is_red_high()
+== true`) may be the **sender** of a warp. It can warp to any online
+destination directly via `request_teleport`. Nodes without the chamber cannot
+initiate — they call `summon_chamber`, which sends `TP_SUMMON` to the holder;
+the holder then initiates the normal `TP_REQ` handshake back to the summoner
+(who becomes the receiver).
+
 Every teleporter instance on the wired network plays exactly one of three
 roles during a given warp:
 
@@ -88,9 +104,10 @@ in `protocol.lua` and is exposed read-only via `protocol.snapshot()`.
 
 ## FSM states
 
-`IDLE` → `REQUESTING` (sender awaits `TP_ACK`) → `COUNTDOWN_LOCAL` (sender
-counts down, broadcasts `TP_SYNC`) → `COOLDOWN` (all nodes). Receivers and
-bystanders enter `COUNTDOWN_REMOTE` directly on the first `TP_SYNC`. Any
-countdown state can transition to `COOLDOWN` via `TP_ABORT` / `TP_DONE` /
-hardware fault / power loss. See `protocol.lua` header comment for the full
-message sequence.
+`IDLE` → `REQUESTING` (sender awaits `TP_ACK` after `TP_REQ`; or non-holder
+awaits `TP_REQ` after `TP_SUMMON` — tracked via `tp_summon_mode`) →
+`COUNTDOWN_LOCAL` (sender counts down, broadcasts `TP_SYNC`) → `COOLDOWN`
+(all nodes). Receivers and bystanders enter `COUNTDOWN_REMOTE` directly on
+the first `TP_SYNC`. Any countdown state can transition to `COOLDOWN` via
+`TP_ABORT` / `TP_DONE` / hardware fault / power loss. See `protocol.lua`
+header comment for the full message sequence.

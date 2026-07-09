@@ -1,11 +1,19 @@
 -- Teleport protocol state machine and wire-message handling.
 -- Drives the full lifecycle: peer discovery (HELLO/HB/PONG/BYE), name
--- propagation (RENAME), and the teleport handshake (TP_REQ -> TP_ACK ->
--- TP_SYNC/TP_PWR countdown -> TP_DONE/TP_ABORT -> TP_COOL cooldown).
+-- propagation (RENAME), chamber summon (TP_SUMMON), and the teleport
+-- handshake (TP_REQ -> TP_ACK -> TP_SYNC/TP_PWR countdown ->
+-- TP_DONE/TP_ABORT -> TP_COOL cooldown).
+--
+-- Only the node holding the warp chamber (Red signal high) may be the warp
+-- sender. It can initiate a warp to any online destination directly via
+-- request_teleport. Nodes without the chamber call summon_chamber, which
+-- sends TP_SUMMON to the chamber holder; the holder then initiates the
+-- normal TP_REQ handshake back to the summoner (who becomes the receiver).
+--
 -- Owns all FSM state and every protocol-internal timer; exposes a snapshot
 -- of that state for the UI to render, plus entry points for user actions
--- (request_teleport, abort_user_cancel) and periodic tasks (discover,
--- heartbeat).
+-- (request_teleport, summon_chamber, abort_user_cancel) and periodic tasks
+-- (discover, heartbeat).
 
 local computer = require("computer")
 local event = require("event")
@@ -42,6 +50,8 @@ return function(deps)
   local cooldown_total = config.COOLDOWN_DURATION
   local cooldown_authority = false
   local tp_role = nil
+  local tp_summon_mode = false
+  local tp_summon_target = nil
 
   local countdown_timer = nil
   local cooldown_timer = nil
@@ -85,6 +95,8 @@ return function(deps)
     tp_dest_power_val = 0
     tp_dest_power_ts = 0
     tp_role = nil
+    tp_summon_mode = false
+    tp_summon_target = nil
   end
 
   local abort_teleport
@@ -293,12 +305,25 @@ return function(deps)
     app.dirty = true
   end
 
+  local function find_chamber_holder()
+    if redstone.is_red_high() then
+      return config.MY_ADDR
+    end
+    for addr, p in pairs(peers.all()) do
+      if p.online and p.has_tp then
+        return addr
+      end
+    end
+    return nil
+  end
+
   local function request_teleport(dest_addr)
     if app.shutting_down then
       return
     end
     if
       APP_STATE ~= "IDLE"
+      or not redstone.is_red_high()
       or not peers.get(dest_addr)
       or not peers.get(dest_addr).online
       or dest_addr == config.MY_ADDR
@@ -327,6 +352,44 @@ return function(deps)
       end
       if APP_STATE == "REQUESTING" and tp_active_seq == seq then
         abort_teleport(OUTCOME.NO_RESPONSE, "Destination did not respond", true, true)
+      end
+    end, 1)
+  end
+
+  local function summon_chamber()
+    if app.shutting_down then
+      return
+    end
+    if APP_STATE ~= "IDLE" or redstone.is_red_high() then
+      return
+    end
+    local holder = find_chamber_holder()
+    if not holder then
+      start_cooldown(OUTCOME.NO_CHAMBER, "Warp chamber not found on the network", nil, true)
+      return
+    end
+    local seq = next_seq()
+    tp_active_seq = seq
+    tp_active_src = config.MY_ADDR
+    tp_summon_mode = true
+    tp_summon_target = holder
+    APP_STATE = "REQUESTING"
+    app.dirty = true
+
+    local peer = peers.get(holder)
+    local modem_target = peer and peer.modem_addr or holder
+    modem.send({ t = MT.TP_SUMMON, s = config.MY_ADDR, d = holder, id = seq }, modem_target)
+
+    if request_timeout_timer then
+      event.cancel(request_timeout_timer)
+    end
+    request_timeout_timer = event.timer(5, function()
+      request_timeout_timer = nil
+      if app.shutting_down then
+        return
+      end
+      if APP_STATE == "REQUESTING" and tp_summon_mode and tp_active_seq == seq then
+        abort_teleport(OUTCOME.NO_RESPONSE, "Chamber holder did not respond", false, true)
       end
     end, 1)
   end
@@ -397,7 +460,8 @@ return function(deps)
     end
 
     if msg.t == MT.TP_REQ then
-      if APP_STATE ~= "IDLE" or app.rename_mode then
+      local is_summon_response = tp_summon_mode and src == tp_summon_target
+      if not is_summon_response and (APP_STATE ~= "IDLE" or app.rename_mode) then
         modem.send({ t = MT.TP_ACK, s = config.MY_ADDR, d = src, id = msg.id, ok = false, pwr = 0 }, remote_addr)
         return
       end
@@ -413,6 +477,9 @@ return function(deps)
           oc = OUTCOME.HW_FAULT,
           why = "Destination hardware fault: " .. (reason or "unknown"),
         }, remote_addr)
+        if is_summon_response then
+          abort_teleport(OUTCOME.HW_FAULT, "Destination hardware fault: " .. (reason or "unknown"), false, true)
+        end
         return
       end
       local our_power = ae2.get_power()
@@ -426,8 +493,44 @@ return function(deps)
         pwr = our_power,
       }, remote_addr)
       if power_ok then
+        if is_summon_response then
+          if request_timeout_timer then
+            event.cancel(request_timeout_timer)
+            request_timeout_timer = nil
+          end
+          tp_summon_mode = false
+          tp_summon_target = nil
+        end
         start_countdown(src, config.MY_ADDR, msg.id, true, our_power, false)
+      elseif is_summon_response then
+        abort_teleport(OUTCOME.REFUSED, "Insufficient power to receive warp", false, true)
       end
+      return
+    end
+
+    if msg.t == MT.TP_SUMMON then
+      if APP_STATE ~= "IDLE" or app.rename_mode or not redstone.is_red_high() then
+        modem.send({
+          t = MT.TP_ABORT,
+          s = config.MY_ADDR,
+          id = msg.id,
+          oc = OUTCOME.REFUSED,
+          why = "Chamber holder unavailable",
+        }, remote_addr)
+        return
+      end
+      local unhealthy, reason = redstone.check_health()
+      if unhealthy then
+        modem.send({
+          t = MT.TP_ABORT,
+          s = config.MY_ADDR,
+          id = msg.id,
+          oc = OUTCOME.HW_FAULT,
+          why = "Hardware fault: " .. (reason or "unknown"),
+        }, remote_addr)
+        return
+      end
+      request_teleport(src)
       return
     end
 
@@ -571,6 +674,10 @@ return function(deps)
   end
 
   local function abort_user_cancel()
+    if APP_STATE == "REQUESTING" and tp_summon_mode then
+      abort_teleport(OUTCOME.USER_CANCEL, "Cancelled by " .. config.get_name(), false, true)
+      return
+    end
     local is_auth = (APP_STATE == "REQUESTING" or APP_STATE == "COUNTDOWN_LOCAL")
     abort_teleport(OUTCOME.USER_CANCEL, "Cancelled by " .. config.get_name(), true, is_auth)
   end
@@ -594,6 +701,10 @@ return function(deps)
       cooldown_total = cooldown_total,
       cooldown_authority = cooldown_authority,
       tp_role = tp_role,
+      tp_summon_mode = tp_summon_mode,
+      tp_summon_target = tp_summon_target,
+      has_chamber = redstone.is_red_high(),
+      chamber_holder = find_chamber_holder(),
     }
   end
 
@@ -612,6 +723,7 @@ return function(deps)
   return {
     handle_message = handle_message,
     request_teleport = request_teleport,
+    summon_chamber = summon_chamber,
     abort_user_cancel = abort_user_cancel,
     abort_if_unhealthy = abort_if_unhealthy,
     discover = discover,
