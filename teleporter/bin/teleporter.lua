@@ -45,7 +45,7 @@ local app = {
 
 local config = config_factory()
 local util = util_factory()
-local ae2 = ae2_factory()
+local ae2 = ae2_factory({ config = config })
 local peers = peers_factory({ config = config, app = app })
 local redstone = redstone_factory({ config = config, peers = peers, app = app })
 local display = display_factory()

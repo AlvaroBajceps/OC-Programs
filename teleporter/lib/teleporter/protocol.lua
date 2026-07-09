@@ -58,6 +58,8 @@ return function(deps)
   local tp_role = nil
   local tp_summon_mode = false
   local tp_summon_target = nil
+  local tp_stock_confirmed = false
+  local tp_stock_local = false
 
   local countdown_timer = nil
   local cooldown_timer = nil
@@ -113,6 +115,8 @@ return function(deps)
     tp_role = nil
     tp_summon_mode = false
     tp_summon_target = nil
+    tp_stock_confirmed = false
+    tp_stock_local = false
   end
 
   local abort_teleport
@@ -132,6 +136,9 @@ return function(deps)
     tp_outcome = outcome_code
     tp_outcome_reason = reason
     tp_outcome_seq = seq
+    if tp_stock_local then
+      ae2.clear_ink_sac()
+    end
     reset_tp_state()
     if cooldown_timer then
       event.cancel(cooldown_timer)
@@ -190,6 +197,10 @@ return function(deps)
 
   local function fire_teleport()
     if app.shutting_down then
+      return
+    end
+    if not tp_stock_confirmed then
+      abort_teleport(OUTCOME.STOCK_FAIL, "Receiver never confirmed ink-sac stocking (fire-time guard)", true, true)
       return
     end
     local seq = tp_active_seq
@@ -354,6 +365,7 @@ return function(deps)
     tp_role = is_local and "sender" or "receiver"
 
     if is_local then
+      tp_stock_confirmed = false
       tp_src_power_val = ae2.get_power()
       tp_src_power_ok = tp_src_power_val >= config.AE_POWER_REQUIRED
       broadcast_tp_sync(seq, tp_countdown_remaining, config.COUNTDOWN_DURATION)
@@ -372,6 +384,16 @@ return function(deps)
           return
         end
         tp_countdown_remaining = tp_countdown_remaining - tick
+        if tp_countdown_remaining <= config.STOCK_DEADLINE_SEC and not tp_stock_confirmed then
+          countdown_timer = nil
+          abort_teleport(
+            OUTCOME.STOCK_FAIL,
+            "Receiver did not confirm ink-sac stocking by T-" .. config.STOCK_DEADLINE_SEC,
+            true,
+            true
+          )
+          return
+        end
         if tp_countdown_remaining > 0 then
           broadcast_tp_sync(seq, tp_countdown_remaining, config.COUNTDOWN_DURATION)
         end
@@ -385,6 +407,11 @@ return function(deps)
       tp_src_power_val = 0
       tp_src_power_ok = false
       reset_sync_hang(seq)
+      tp_stock_local = false
+      if ae2.request_ink_sac() then
+        tp_stock_local = true
+        modem.send({ t = MT.TP_STOCK, s = config.MY_ADDR, id = seq })
+      end
     end
     app.dirty = true
   end
@@ -658,12 +685,41 @@ return function(deps)
         tp_src_power_val = msg.sp or tp_src_power_val
         tp_src_power_ok = msg.sok == true
         app.dirty = true
+        if is_dest then
+          if not tp_stock_local then
+            if ae2.request_ink_sac() then
+              tp_stock_local = true
+              modem.send({ t = MT.TP_STOCK, s = config.MY_ADDR, id = msg.id })
+            elseif (msg.rem or 0) <= config.STOCK_DEADLINE_SEC then
+              abort_teleport(
+                OUTCOME.STOCK_FAIL,
+                "Receiver could not place ink-sac stocking request by T-" .. config.STOCK_DEADLINE_SEC,
+                true,
+                false
+              )
+              return
+            end
+          else
+            if not ae2.verify_ink_sac() then
+              abort_teleport(OUTCOME.STOCK_FAIL, "Ink-sac stocking request lost during countdown", true, false)
+              return
+            end
+          end
+        end
       else
         return
       end
       reset_sync_hang(msg.id)
       if is_dest then
         broadcast_tp_pwr(msg.id)
+      end
+      return
+    end
+
+    if msg.t == MT.TP_STOCK then
+      if msg.id == tp_active_seq and APP_STATE == "COUNTDOWN_LOCAL" then
+        tp_stock_confirmed = true
+        app.dirty = true
       end
       return
     end
@@ -687,6 +743,10 @@ return function(deps)
 
     if msg.t == MT.TP_FIRE then
       if APP_STATE == "COUNTDOWN_REMOTE" and msg.id == tp_active_seq then
+        if tp_active_dest == config.MY_ADDR and tp_stock_local and not ae2.verify_ink_sac() then
+          abort_teleport(OUTCOME.STOCK_FAIL, "Ink-sac stocking request missing at TP_FIRE", true, false)
+          return
+        end
         cancel_countdown_timers()
         APP_STATE = "CONFIRMING"
         app.dirty = true
@@ -825,6 +885,8 @@ return function(deps)
       tp_role = tp_role,
       tp_summon_mode = tp_summon_mode,
       tp_summon_target = tp_summon_target,
+      tp_stock_confirmed = tp_stock_confirmed,
+      tp_stock_local = tp_stock_local,
       has_chamber = redstone.is_red_high(),
       chamber_holder = find_chamber_holder(),
     }

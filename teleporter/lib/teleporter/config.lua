@@ -50,6 +50,9 @@ return function()
     -- never lands on exactly 0 and the fire trigger breaks.
     COUNTDOWN_TICK_INTERVAL = 0.25,
     AE_POWER_REQUIRED = 900000,
+    STOCK_DB_INDEX = 1,
+    STOCK_SLOT = 1,
+    STOCK_DEADLINE_SEC = 3,
     MAX_NAME_LEN = MAX_NAME_LEN,
     NAME_FILE = NAME_FILE,
     SYNC_HANG_TIMEOUT = 5,
@@ -75,6 +78,7 @@ return function()
       HW_FAULT = "hwfault",
       NO_CHAMBER = "nochamber",
       CHAMBER_LOST = "chamberlost",
+      STOCK_FAIL = "stockfail",
     },
     -- Short single-char tags for payload efficiency on the wire.
     MT = {
@@ -85,6 +89,7 @@ return function()
       TP_REQ = "R",
       TP_ACK = "A",
       TP_SYNC = "S",
+      TP_STOCK = "K",
       TP_PWR = "P",
       TP_ABORT = "X",
       TP_DONE = "D",
