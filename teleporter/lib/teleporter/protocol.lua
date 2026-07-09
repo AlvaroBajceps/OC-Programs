@@ -379,13 +379,11 @@ return function(deps)
         tp_src_power_val = our_power
         tp_src_power_ok = our_power >= config.AE_POWER_REQUIRED
         if not tp_src_power_ok then
-          countdown_timer = nil
           abort_teleport(OUTCOME.SRC_POWER, "Source power dropped below threshold", true, true)
           return
         end
         tp_countdown_remaining = tp_countdown_remaining - tick
         if tp_countdown_remaining <= config.STOCK_DEADLINE_SEC and not tp_stock_confirmed then
-          countdown_timer = nil
           abort_teleport(
             OUTCOME.STOCK_FAIL,
             "Receiver did not confirm ink-sac stocking by T-" .. config.STOCK_DEADLINE_SEC,
