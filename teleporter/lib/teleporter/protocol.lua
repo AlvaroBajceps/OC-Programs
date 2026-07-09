@@ -697,11 +697,9 @@ return function(deps)
               )
               return
             end
-          else
-            if not ae2.verify_ink_sac() then
-              abort_teleport(OUTCOME.STOCK_FAIL, "Ink-sac stocking request lost during countdown", true, false)
-              return
-            end
+          elseif (msg.rem or 0) <= config.STOCK_DEADLINE_SEC and not ae2.verify_ink_sac() then
+            abort_teleport(OUTCOME.STOCK_FAIL, "Ink-sac stocking request lost during countdown", true, false)
+            return
           end
         end
       else
