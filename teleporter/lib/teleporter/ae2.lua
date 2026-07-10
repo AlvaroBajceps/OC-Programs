@@ -36,6 +36,15 @@ return function(deps)
       if not component.isAvailable("me_interface") or not component.isAvailable("database") then
         return false
       end
+      -- setInterfaceConfiguration always returns true in the GTNH OC driver,
+      -- even when the database slot is empty (it silently clears the interface
+      -- slot). Pre-validate the database to avoid false success.
+      local db_ok, db_item = pcall(function()
+        return component.database.get(config.STOCK_DB_INDEX)
+      end)
+      if not db_ok or db_item == nil then
+        return false
+      end
       local ok, res = pcall(function()
         return component.me_interface.setInterfaceConfiguration(
           config.STOCK_SLOT,
@@ -57,7 +66,7 @@ return function(deps)
       if not ok or type(res) ~= "table" then
         return false
       end
-      return res ~= nil
+      return res.name ~= nil
     end,
 
     clear_ink_sac = function()
