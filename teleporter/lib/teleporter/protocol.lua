@@ -137,7 +137,7 @@ return function(deps)
     tp_outcome_reason = reason
     tp_outcome_seq = seq
     if tp_stock_local then
-      ae2.clear_ink_sac()
+      ae2.clear_stock_item()
     end
     reset_tp_state()
     if cooldown_timer then
@@ -200,7 +200,7 @@ return function(deps)
       return
     end
     if not tp_stock_confirmed then
-      abort_teleport(OUTCOME.STOCK_FAIL, "Receiver never confirmed ink-sac stocking (fire-time guard)", true, true)
+      abort_teleport(OUTCOME.STOCK_FAIL, "Receiver never confirmed spatial-cell stocking (fire-time guard)", true, true)
       return
     end
     local seq = tp_active_seq
@@ -386,7 +386,7 @@ return function(deps)
         if tp_countdown_remaining <= config.STOCK_DEADLINE_SEC and not tp_stock_confirmed then
           abort_teleport(
             OUTCOME.STOCK_FAIL,
-            "Receiver did not confirm ink-sac stocking by T-" .. config.STOCK_DEADLINE_SEC,
+            "Receiver did not confirm spatial-cell stocking by T-" .. config.STOCK_DEADLINE_SEC,
             true,
             true
           )
@@ -406,7 +406,7 @@ return function(deps)
       tp_src_power_ok = false
       reset_sync_hang(seq)
       tp_stock_local = false
-      if ae2.request_ink_sac() then
+      if ae2.request_stock_item() then
         tp_stock_local = true
         modem.send({ t = MT.TP_STOCK, s = config.MY_ADDR, id = seq })
       end
@@ -685,20 +685,20 @@ return function(deps)
         app.dirty = true
         if is_dest then
           if not tp_stock_local then
-            if ae2.request_ink_sac() then
+            if ae2.request_stock_item() then
               tp_stock_local = true
               modem.send({ t = MT.TP_STOCK, s = config.MY_ADDR, id = msg.id })
             elseif (msg.rem or 0) <= config.STOCK_DEADLINE_SEC then
               abort_teleport(
                 OUTCOME.STOCK_FAIL,
-                "Receiver could not place ink-sac stocking request by T-" .. config.STOCK_DEADLINE_SEC,
+                "Receiver could not place spatial-cell stocking request by T-" .. config.STOCK_DEADLINE_SEC,
                 true,
                 false
               )
               return
             end
-          elseif (msg.rem or 0) <= config.STOCK_DEADLINE_SEC and not ae2.verify_ink_sac() then
-            abort_teleport(OUTCOME.STOCK_FAIL, "Ink-sac stocking request lost during countdown", true, false)
+          elseif (msg.rem or 0) <= config.STOCK_DEADLINE_SEC and not ae2.verify_stock_item() then
+            abort_teleport(OUTCOME.STOCK_FAIL, "Spatial-cell stocking request lost during countdown", true, false)
             return
           end
         end
@@ -739,8 +739,8 @@ return function(deps)
 
     if msg.t == MT.TP_FIRE then
       if APP_STATE == "COUNTDOWN_REMOTE" and msg.id == tp_active_seq then
-        if tp_active_dest == config.MY_ADDR and tp_stock_local and not ae2.verify_ink_sac() then
-          abort_teleport(OUTCOME.STOCK_FAIL, "Ink-sac stocking request missing at TP_FIRE", true, false)
+        if tp_active_dest == config.MY_ADDR and tp_stock_local and not ae2.verify_stock_item() then
+          abort_teleport(OUTCOME.STOCK_FAIL, "Spatial-cell stocking request missing at TP_FIRE", true, false)
           return
         end
         cancel_countdown_timers()

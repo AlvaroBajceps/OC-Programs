@@ -1,4 +1,4 @@
--- AE2 stored-power telemetry, plus ink-sac stocking gate for receiver-side
+-- AE2 stored-power telemetry, plus spatial-cell stocking gate for receiver-side
 -- warp validation. When no me_controller/me_interface is reachable, power
 -- reports 0 (fail-safe: missing telemetry must never satisfy the threshold).
 -- me_controller and me_interface both inherit getStoredPower/getMaxStoredPower
@@ -33,7 +33,7 @@ return function(deps)
       return 0
     end,
 
-    request_ink_sac = function()
+    request_stock_item = function()
       if not component.isAvailable("me_interface") or not component.isAvailable("database") then
         return false
       end
@@ -57,7 +57,7 @@ return function(deps)
       return ok and res == true
     end,
 
-    verify_ink_sac = function()
+    verify_stock_item = function()
       if not component.isAvailable("me_interface") then
         return false
       end
@@ -70,7 +70,7 @@ return function(deps)
       return res.name ~= nil
     end,
 
-    clear_ink_sac = function()
+    clear_stock_item = function()
       if not component.isAvailable("me_interface") then
         return
       end
