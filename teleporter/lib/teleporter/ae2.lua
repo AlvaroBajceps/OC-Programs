@@ -1,5 +1,6 @@
--- AE2 stored-power telemetry with a mock fallback, plus ink-sac stocking
--- gate for receiver-side warp validation.
+-- AE2 stored-power telemetry, plus ink-sac stocking gate for receiver-side
+-- warp validation. When no me_controller/me_interface is reachable, power
+-- reports 0 (fail-safe: missing telemetry must never satisfy the threshold).
 -- me_controller and me_interface both inherit getStoredPower/getMaxStoredPower
 -- from CommonNetworkAPI; stocking requires me_interface + database components.
 
@@ -29,7 +30,7 @@ return function(deps)
           return val
         end
       end
-      return 2000000
+      return 0
     end,
 
     request_ink_sac = function()
