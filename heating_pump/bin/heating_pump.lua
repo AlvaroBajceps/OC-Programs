@@ -37,17 +37,16 @@ local display
 
 -- ── Component discovery ────────────────────────────────────────────
 
--- Probes a gt_machine proxy to classify it as a pump (DEHP) or tank (SuperTank 1).
--- DEHPs process work (getWorkMaxProgress > 0); storage tanks don't.
 local function classify_gt_component(address)
   local proxy = component.proxy(address)
-
-  local ok, max_progress = pcall(proxy.getWorkMaxProgress, proxy)
-  if ok and type(max_progress) == "number" and max_progress > 0 then
-    return "pump"
+  local ok, name = pcall(proxy.getName, proxy)
+  if ok and name then
+    local lower = name:lower()
+    if lower:find("tank") then
+      return "tank"
+    end
   end
-
-  return "tank"
+  return "pump"
 end
 
 local function classify_tank(tank_wrapper)
@@ -120,7 +119,9 @@ local function main()
   for address, kind in component.list() do
     if kind == "gt_machine" then
       local typeof = classify_gt_component(address)
-      print(string.format("  gt_machine %s → %s", address:sub(1, 8), typeof))
+      local proxy = component.proxy(address)
+      local _, nm = pcall(proxy.getName, proxy)
+      print(string.format("  gt_machine %s → %s (name: %s)", address:sub(1, 8), typeof, tostring(nm)))
       if typeof == "pump" then
         pump_addrs[#pump_addrs + 1] = address
       else
