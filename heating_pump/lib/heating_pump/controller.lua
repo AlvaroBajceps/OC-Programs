@@ -17,6 +17,7 @@ return function(deps)
     desired_active = 0,
     last_action = "Initializing",
     last_action_time = nil,
+    projected_hot_pct = nil,
   }
   local history = {}
 
@@ -153,7 +154,17 @@ return function(deps)
       cold_pct = (cold.amount or 0) / cold.capacity
     end
 
-    -- 3a. Hysteresis adjustment.
+    -- Get rates from stats for feedforward projection.
+    local _, hot_short = stats.rates()
+
+    -- Project hot tank level for feedforward.
+    if hot.capacity and hot.capacity > 0 and hot_short ~= 0 then
+      state.projected_hot_pct = hot_pct + (hot_short * config.FF_PROJECTION_S / hot.capacity)
+    else
+      state.projected_hot_pct = hot_pct
+    end
+
+    -- 3a. Hysteresis + feedforward adjustment.
     local prev_desired = state.desired_active
 
     if hot_pct < config.HOT_LOW_PCT and state.desired_active < healthy_count then
@@ -174,6 +185,44 @@ return function(deps)
       state.desired_active = state.desired_active - 1
       state.last_action =
         string.format("Hot coolant high (%.0f%%) — disabling pump (desired %d)", hot_pct * 100, state.desired_active)
+      state.last_action_time = current_uptime
+      _push_history(state.last_action)
+    elseif
+      state.projected_hot_pct < config.HOT_LOW_PCT
+      and math.abs(hot_short) > config.FF_MIN_RATE_L_S
+      and state.desired_active < healthy_count
+    then
+      if cold_pct < config.COLD_CAUTION_PCT then
+        state.last_action = string.format(
+          "FF: hot draining (%.0f L/s) but cold low (%.0f%%) — holding",
+          math.abs(hot_short),
+          cold_pct * 100
+        )
+        state.last_action_time = current_uptime
+        _push_history(state.last_action)
+      else
+        state.desired_active = state.desired_active + 1
+        state.last_action = string.format(
+          "FF: hot draining (%.0f L/s, projected %.0f%%) — enabling pump (%d)",
+          math.abs(hot_short),
+          state.projected_hot_pct * 100,
+          state.desired_active
+        )
+        state.last_action_time = current_uptime
+        _push_history(state.last_action)
+      end
+    elseif
+      state.projected_hot_pct > config.HOT_HIGH_PCT
+      and math.abs(hot_short) > config.FF_MIN_RATE_L_S
+      and state.desired_active > 0
+    then
+      state.desired_active = state.desired_active - 1
+      state.last_action = string.format(
+        "FF: hot filling (%.0f L/s, projected %.0f%%) — disabling pump (%d)",
+        math.abs(hot_short),
+        state.projected_hot_pct * 100,
+        state.desired_active
+      )
       state.last_action_time = current_uptime
       _push_history(state.last_action)
     end
@@ -239,6 +288,7 @@ return function(deps)
       total_count = _count_total(),
       last_action = state.last_action,
       last_action_time = state.last_action_time,
+      projected_hot_pct = state.projected_hot_pct,
       emergency_cold_amount = config.COLD_EMERGENCY_L,
       history = history,
     }

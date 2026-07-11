@@ -30,6 +30,12 @@ return function()
     -- Control-loop period in seconds.
     TICK_INTERVAL = 1.0,
 
+    -- Feedforward: project hot tank level this many seconds ahead.
+    FF_PROJECTION_S = 5.0,
+
+    -- Feedforward: minimum |rate| (L/s) to trigger preemptive action (filters noise).
+    FF_MIN_RATE_L_S = 500,
+
     -- Rolling-average window for long-term rate display.
     STATS_WINDOW_S = 60,
 

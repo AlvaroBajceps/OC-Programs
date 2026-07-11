@@ -15,6 +15,7 @@
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
+local sides = require("sides")
 
 local config_factory = require("heating_pump.config")
 local machine_factory = require("heating_pump.machine")
@@ -37,24 +38,32 @@ local display
 
 -- ── Component discovery ────────────────────────────────────────────
 
-local function discover_gt_machines()
-  local found = {}
-  for address, kind in component.list() do
-    if kind == "gt_machine" then
-      found[#found + 1] = { address = address, index = #found + 1 }
-    end
-  end
-  return found
-end
+-- Probes a gt_machine proxy to classify it as a pump (DEHP) or tank (SuperTank 1).
+-- Pumps may or may not have internal tanks; tanks always have tanks but no progress.
+local function classify_gt_component(address)
+  local proxy = component.proxy(address)
+  local has_tanks = false
 
-local function discover_transposers()
-  local found = {}
-  for address, kind in component.list() do
-    if kind == "transposer" then
-      found[#found + 1] = address
+  local side_order = { sides.down, sides.up, sides.north, sides.south, sides.west, sides.east }
+  for _, side_val in ipairs(side_order) do
+    local ok, count = pcall(proxy.getTankCount, proxy, side_val)
+    if ok and type(count) == "number" and count >= 1 then
+      has_tanks = true
+      break
     end
   end
-  return found
+
+  if not has_tanks then
+    return "pump"
+  end
+
+  -- It has tanks — distinguish a processing machine from a storage tank.
+  local ok, max_progress = pcall(proxy.getWorkMaxProgress, proxy)
+  if ok and type(max_progress) == "number" and max_progress > 0 then
+    return "pump"
+  end
+
+  return "tank"
 end
 
 local function classify_tank(tank_wrapper)
@@ -119,28 +128,48 @@ end
 -- ── Main ───────────────────────────────────────────────────────────
 
 local function main()
-  local machine_addrs = discover_gt_machines()
-  if #machine_addrs < 1 then
+  -- Unified discovery: classify all gt_machine adapters as pumps or tanks.
+  local pump_addrs = {}
+  local tank_addrs = {}
+
+  for address, kind in component.list() do
+    if kind == "gt_machine" then
+      local typeof = classify_gt_component(address)
+      if typeof == "pump" then
+        pump_addrs[#pump_addrs + 1] = address
+      else
+        tank_addrs[#tank_addrs + 1] = address
+      end
+    end
+  end
+
+  -- Backward compat: also discover standalone transposer adapters.
+  for address, kind in component.list() do
+    if kind == "transposer" then
+      tank_addrs[#tank_addrs + 1] = address
+    end
+  end
+
+  if #pump_addrs == 0 then
     fatal("No gt_machine pumps discovered. Check adapter placement and cabling.")
     return
   end
 
   machines = {}
-  for _, info in ipairs(machine_addrs) do
-    local m = machine_factory({ address = info.address, index = info.index })
+  for i, addr in ipairs(pump_addrs) do
+    local m = machine_factory({ address = addr, index = i })
     machines[#machines + 1] = m
   end
-  local pump_count = #machines
-  print(string.format("Discovered %d gt_machine pump(s).", pump_count))
 
-  local transposer_addrs = discover_transposers()
-  if #transposer_addrs == 0 then
-    fatal("No transposer components discovered. Attach adapters to coolant tanks.")
+  if #tank_addrs == 0 then
+    fatal("No coolant tanks discovered. Check adapter placement and cabling.")
     return
   end
 
+  print(string.format("Discovered %d pump(s) and %d tank(s).", #pump_addrs, #tank_addrs))
+
   local tank_wrappers = {}
-  for _, addr in ipairs(transposer_addrs) do
+  for _, addr in ipairs(tank_addrs) do
     local t = tank_factory({ address = addr })
     tank_wrappers[#tank_wrappers + 1] = t
   end
