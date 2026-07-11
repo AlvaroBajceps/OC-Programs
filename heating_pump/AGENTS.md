@@ -56,8 +56,9 @@ cold tank is assumed empty. This prevents DEHP explosions from running dry.
 ## Module map
 
 ```
-bin/heating_pump.lua            composition root: discovers components, wires
-                                modules, owns the event/render loop
+bin/heating_pump.lua            composition root: discovers and classifies
+                                components (gt_machine → pump or tank),
+                                wires modules, owns the event/render loop
 lib/heating_pump/config.lua     constants: thresholds, timing, colors, screen
                                 dimensions, pump rate
 lib/heating_pump/machine.lua    wraps a single gt_machine pump: refresh,
@@ -67,7 +68,8 @@ lib/heating_pump/tank.lua       wraps a single transposer adapter: auto-probe
 lib/heating_pump/stats.lua      sliding-window rate tracker for hot/cold tank
                                 fill-rate deltas (60s + 10s windows)
 lib/heating_pump/controller.lua the balancing + emergency-shutdown brain:
-                                hysteresis, cold caution, min-runtime lock
+                                hysteresis, feedforward, cold caution,
+                                min-runtime lock
 lib/heating_pump/display.lua    double-buffered 80x25 dashboard renderer with
                                 box-drawing primitives and bar charts
 rc.d/heating_pump.lua           OpenOS service entrypoint: start() clears term
@@ -76,8 +78,23 @@ rc.d/heating_pump.lua           OpenOS service entrypoint: start() clears term
 
 The bin owns the `app` cross-cutting table (`dirty`, `shutting_down`).
 The controller owns all control state (mode, desired_active, last_action,
-history). The display reads snapshots from controller, machines, tanks,
-and stats — it owns no persistent state.
+projected_hot_pct, history). The display reads snapshots from controller,
+machines, tanks, and stats — it owns no persistent state.
+
+## Component discovery
+
+The bin discovers all `gt_machine` components via `component.list()` and
+classifies each as a **pump** (DEHP) or **tank** (SuperTank 1) by probing:
+
+1. Call `getTankCount` on all 6 sides. If no side has tanks → **pump**.
+2. If tanks are found, call `getWorkMaxProgress`. If it returns a positive
+   number → **pump** (DEHP with internal tanks). Otherwise → **tank**
+   (storage machine like SuperTank 1).
+
+Standalone `transposer` components are also discovered for backward
+compatibility and added to the tank pool. Tanks are then classified as
+hot or cold by fluid name/label, with fallback assignment (first unknown
+→ hot, second → cold).
 
 ## Control algorithm
 
@@ -100,10 +117,19 @@ and stats — it owns no persistent state.
      decrement `desired_active`.
    - Deadband: between 30-70%, hold steady.
 
-5. **Cold caution**: if cold_pct < `COLD_CAUTION_PCT` (25%), cap
+5. **Feedforward** (only when hot_pct is in the deadband 30-70%):
+   - Project hot tank level `FF_PROJECTION_S` (5s) ahead using the
+     10-second rolling rate from stats: `projected = hot_pct + (hot_short * 5 / capacity)`.
+   - If projected < `HOT_LOW_PCT` and |rate| > `FF_MIN_RATE_L_S` (500 L/s)
+     and desired < healthy → increment `desired_active` (preemptive enable).
+   - If projected > `HOT_HIGH_PCT` and |rate| > `FF_MIN_RATE_L_S`
+     and desired > 0 → decrement `desired_active` (preemptive disable).
+   - Cold caution cap applies to feedforward enables.
+
+6. **Cold caution**: if cold_pct < `COLD_CAUTION_PCT` (25%), cap
    `desired_active` — allow decreasing but not increasing.
 
-6. **Reconciliation**: build ordered list of eligible pumps (online +
+7. **Reconciliation**: build ordered list of eligible pumps (online +
    not maintenance, sorted by index). First `desired_active` eligible
    pumps should be ON; the rest OFF. Maintenance/offline pumps are
    always OFF. Min-runtime: a pump enabled < 5s ago stays on.
