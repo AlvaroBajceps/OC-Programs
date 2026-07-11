@@ -15,7 +15,6 @@
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
-local sides = require("sides")
 
 local config_factory = require("heating_pump.config")
 local machine_factory = require("heating_pump.machine")
@@ -39,25 +38,10 @@ local display
 -- ── Component discovery ────────────────────────────────────────────
 
 -- Probes a gt_machine proxy to classify it as a pump (DEHP) or tank (SuperTank 1).
--- Pumps may or may not have internal tanks; tanks always have tanks but no progress.
+-- DEHPs process work (getWorkMaxProgress > 0); storage tanks don't.
 local function classify_gt_component(address)
   local proxy = component.proxy(address)
-  local has_tanks = false
 
-  local side_order = { sides.down, sides.up, sides.north, sides.south, sides.west, sides.east }
-  for _, side_val in ipairs(side_order) do
-    local ok, count = pcall(proxy.getTankCount, proxy, side_val)
-    if ok and type(count) == "number" and count >= 1 then
-      has_tanks = true
-      break
-    end
-  end
-
-  if not has_tanks then
-    return "pump"
-  end
-
-  -- It has tanks — distinguish a processing machine from a storage tank.
   local ok, max_progress = pcall(proxy.getWorkMaxProgress, proxy)
   if ok and type(max_progress) == "number" and max_progress > 0 then
     return "pump"
@@ -113,6 +97,7 @@ end
 
 local function fatal(msg)
   pcall(shutdown)
+  print("FATAL: " .. tostring(msg))
   if display and display.get_gpu() then
     local g = display.get_gpu()
     g.setActiveBuffer(0)
@@ -135,6 +120,7 @@ local function main()
   for address, kind in component.list() do
     if kind == "gt_machine" then
       local typeof = classify_gt_component(address)
+      print(string.format("  gt_machine %s → %s", address:sub(1, 8), typeof))
       if typeof == "pump" then
         pump_addrs[#pump_addrs + 1] = address
       else
@@ -147,6 +133,7 @@ local function main()
   for address, kind in component.list() do
     if kind == "transposer" then
       tank_addrs[#tank_addrs + 1] = address
+      print(string.format("  transposer %s → tank", address:sub(1, 8)))
     end
   end
 
@@ -171,6 +158,16 @@ local function main()
   local tank_wrappers = {}
   for _, addr in ipairs(tank_addrs) do
     local t = tank_factory({ address = addr })
+    local s = t.get_state()
+    print(
+      string.format(
+        "  tank %s: online=%s side=%s amount=%s",
+        addr:sub(1, 8),
+        tostring(s.online),
+        tostring(s.side),
+        tostring(s.amount)
+      )
+    )
     tank_wrappers[#tank_wrappers + 1] = t
   end
 
