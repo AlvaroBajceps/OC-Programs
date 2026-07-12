@@ -155,9 +155,15 @@ local function main()
   redstone_listener = event.listen("redstone_changed", refresh_redstone)
 
   hb_timer = event.timer(config.HEARTBEAT_INTERVAL, protocol.heartbeat, math.huge)
+  local power_refresh_tick = 0
   refresh_timer = event.timer(1, function()
     refresh_redstone()
     peers.refresh_status()
+    power_refresh_tick = power_refresh_tick + 1
+    if power_refresh_tick >= 5 then
+      power_refresh_tick = 0
+      app.dirty = true
+    end
   end, math.huge)
 
   refresh_redstone()
