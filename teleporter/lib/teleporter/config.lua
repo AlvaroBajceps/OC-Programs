@@ -49,7 +49,6 @@ return function()
     -- cheap). Must evenly divide COUNTDOWN_DURATION, else the float countdown
     -- never lands on exactly 0 and the fire trigger breaks.
     COUNTDOWN_TICK_INTERVAL = 0.25,
-    AE_POWER_REQUIRED = 900000,
     STOCK_DB_INDEX = 1,
     STOCK_SLOT = 1,
     STOCK_DEADLINE_SEC = 3,
@@ -58,6 +57,9 @@ return function()
     SYNC_HANG_TIMEOUT = 5,
     DEST_HANG_TIMEOUT = 5,
     POWER_STALE_SEC = 3,
+    -- Single window covering both receiver confirm stages after the sender
+    -- fires: Stage 1 (cell arrives, hasInputCell && canTrigger) + Stage 2
+    -- (cell reloads, hasInputCell returns true after the receiver triggers).
     CONFIRM_TIMEOUT = 10,
     RECOVERY_DURATION = 3,
     -- OC bundled-redstone color bit indices (ProjectRed / RedLogic compatible,

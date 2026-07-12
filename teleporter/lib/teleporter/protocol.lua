@@ -2,7 +2,8 @@
 -- Drives the full lifecycle: peer discovery (HELLO/HB/PONG/BYE), name
 -- propagation (RENAME), chamber summon (TP_SUMMON), and the teleport
 -- handshake (TP_REQ -> TP_ACK -> TP_SYNC/TP_PWR countdown -> TP_FIRE ->
--- chamber-arrival confirmation -> TP_DONE/TP_ABORT -> TP_COOL cooldown).
+-- receiver two-stage confirm (trigger + cell reload) -> TP_DONE/TP_ABORT ->
+-- TP_COOL cooldown).
 --
 -- Only the node holding the warp chamber (Red signal high) may be the warp
 -- sender. It can initiate a warp to any online destination directly via
@@ -10,16 +11,22 @@
 -- sends TP_SUMMON to the chamber holder; the holder then initiates the
 -- normal TP_REQ handshake back to the summoner (who becomes the receiver).
 --
--- At countdown zero the sender broadcasts TP_FIRE and enters CONFIRMING.
--- The receiver detects chamber arrival via Red signal going high, then
--- broadcasts TP_DONE to transition all nodes to cooldown. If the chamber
--- does not arrive within CONFIRM_TIMEOUT, the sender enters RECOVERING
--- (failover hook), then broadcasts TP_DONE with CHAMBER_LOST outcome.
+-- At countdown zero the sender calls spatial_io.trigger() (compacting the
+-- chamber into a spatial storage cell, ejected to the AE2 network toward the
+-- receiver), broadcasts TP_FIRE, and enters CONFIRMING. The receiver polls its
+-- own spatial_io port in two stages: Stage 1 — waits for hasInputCell &&
+-- canTrigger (the cell arrived from the sender + energy sufficient), then
+-- calls spatial_io.trigger() (chamber plays back at the receiver, Red goes
+-- high); Stage 2 — waits for hasInputCell to return true (cell reloaded after
+-- playback), then broadcasts TP_DONE so all nodes clear stock and enter
+-- cooldown. If the receiver does not complete both stages within
+-- CONFIRM_TIMEOUT, the sender enters RECOVERING (failover hook), then
+-- broadcasts TP_DONE with CHAMBER_LOST outcome.
 --
 -- Owns all FSM state and every protocol-internal timer; exposes a snapshot
 -- of that state for the UI to render, plus entry points for user actions
 -- (request_teleport, summon_chamber, abort_user_cancel) and periodic tasks
--- (discover, heartbeat, check_chamber_arrival).
+-- (discover, heartbeat, check_receiver_confirm).
 
 local computer = require("computer")
 local event = require("event")
@@ -29,6 +36,7 @@ return function(deps)
   local util = deps.util
   local modem = deps.modem
   local ae2 = deps.ae2
+  local spatial_io = deps.spatial_io
   local redstone = deps.redstone
   local peers = deps.peers
   local app = deps.app
@@ -49,6 +57,10 @@ return function(deps)
   local tp_dest_power_ok = false
   local tp_dest_power_val = 0
   local tp_dest_power_ts = 0
+  local tp_src_required = -1
+  local tp_dest_required = -1
+  local tp_receiver_triggered = false
+  local tp_receiver_cell_consumed = false
   local tp_outcome = nil
   local tp_outcome_reason = nil
   local tp_outcome_seq = nil
@@ -112,6 +124,10 @@ return function(deps)
     tp_dest_power_ok = false
     tp_dest_power_val = 0
     tp_dest_power_ts = 0
+    tp_src_required = -1
+    tp_dest_required = -1
+    tp_receiver_triggered = false
+    tp_receiver_cell_consumed = false
     tp_role = nil
     tp_summon_mode = false
     tp_summon_target = nil
@@ -204,6 +220,12 @@ return function(deps)
       return
     end
     local seq = tp_active_seq
+    local fired = spatial_io.trigger()
+    if not fired then
+      abort_teleport(OUTCOME.HW_FAULT, "Sender spatial_io.trigger() failed at T-0", true, true)
+      return
+    end
+    ae2.clear_stock_item()
     cancel_countdown_timers()
     APP_STATE = "CONFIRMING"
     app.dirty = true
@@ -234,14 +256,36 @@ return function(deps)
       s = config.MY_ADDR,
       id = seq,
       oc = OUTCOME.CONFIRMED,
-      why = "Chamber confirmed at destination",
+      why = "Warp completed",
     })
     start_cooldown(OUTCOME.CONFIRMED, "Warp completed", seq, true)
     peers.clear_selected()
   end
 
-  local function check_chamber_arrival()
-    if APP_STATE == "CONFIRMING" and tp_active_dest == config.MY_ADDR and redstone.is_red_high() then
+  local function check_receiver_confirm()
+    if app.shutting_down then
+      return
+    end
+    if APP_STATE ~= "CONFIRMING" or tp_active_dest ~= config.MY_ADDR then
+      return
+    end
+    local info = spatial_io.get_info()
+    if not tp_receiver_triggered then
+      if info.hasInputCell and info.canTrigger and info.efficiency ~= -1 then
+        local ok = spatial_io.trigger()
+        if ok then
+          tp_receiver_triggered = true
+          app.dirty = true
+        else
+          abort_teleport(OUTCOME.HW_FAULT, "Receiver spatial_io.trigger() failed", true, false)
+        end
+      end
+    elseif not tp_receiver_cell_consumed then
+      if not info.hasInputCell then
+        tp_receiver_cell_consumed = true
+        app.dirty = true
+      end
+    elseif info.hasInputCell then
       confirm_chamber_arrival()
     end
   end
@@ -321,9 +365,10 @@ return function(deps)
   end
 
   local function broadcast_tp_sync(seq, rem, total)
-    local src_power = ae2.get_power()
-    tp_src_power_val = src_power
-    tp_src_power_ok = src_power >= config.AE_POWER_REQUIRED
+    local info = spatial_io.get_info()
+    tp_src_power_val = info.availableEnergy
+    tp_src_power_ok = info.canTrigger and info.efficiency ~= -1
+    tp_src_required = info.requiredEnergy
     modem.send({
       t = MT.TP_SYNC,
       s = config.MY_ADDR,
@@ -331,26 +376,29 @@ return function(deps)
       rem = rem,
       total = total,
       d = tp_active_dest,
-      sp = src_power,
+      sp = info.availableEnergy,
       sok = tp_src_power_ok,
+      sreq = info.requiredEnergy,
     })
   end
 
   local function broadcast_tp_pwr(seq)
-    local dest_power = ae2.get_power()
-    tp_dest_power_val = dest_power
-    tp_dest_power_ok = dest_power >= config.AE_POWER_REQUIRED
+    local info = spatial_io.get_info()
+    tp_dest_power_val = info.availableEnergy
+    tp_dest_power_ok = info.canTrigger and info.efficiency ~= -1
+    tp_dest_required = info.requiredEnergy
     tp_dest_power_ts = computer.uptime()
     modem.send({
       t = MT.TP_PWR,
       s = config.MY_ADDR,
       id = seq,
-      pwr = dest_power,
+      pwr = info.availableEnergy,
       ok = tp_dest_power_ok,
+      req = info.requiredEnergy,
     })
   end
 
-  local function start_countdown(src, dest, seq, dest_power_ok, dest_power_val, is_local)
+  local function start_countdown(src, dest, seq, dest_power_ok, dest_power_val, dest_required, is_local)
     if app.shutting_down then
       return
     end
@@ -360,14 +408,17 @@ return function(deps)
     tp_countdown_remaining = config.COUNTDOWN_DURATION
     tp_dest_power_ok = dest_power_ok
     tp_dest_power_val = dest_power_val
+    tp_dest_required = dest_required or -1
     tp_dest_power_ts = computer.uptime()
     APP_STATE = is_local and "COUNTDOWN_LOCAL" or "COUNTDOWN_REMOTE"
     tp_role = is_local and "sender" or "receiver"
 
     if is_local then
       tp_stock_confirmed = false
-      tp_src_power_val = ae2.get_power()
-      tp_src_power_ok = tp_src_power_val >= config.AE_POWER_REQUIRED
+      local info = spatial_io.get_info()
+      tp_src_power_val = info.availableEnergy
+      tp_src_power_ok = info.canTrigger and info.efficiency ~= -1
+      tp_src_required = info.requiredEnergy
       broadcast_tp_sync(seq, tp_countdown_remaining, config.COUNTDOWN_DURATION)
       reset_dest_hang(seq)
       if countdown_timer then
@@ -375,11 +426,12 @@ return function(deps)
       end
       local tick = config.COUNTDOWN_TICK_INTERVAL
       countdown_timer = event.timer(tick, function()
-        local our_power = ae2.get_power()
-        tp_src_power_val = our_power
-        tp_src_power_ok = our_power >= config.AE_POWER_REQUIRED
+        local our_info = spatial_io.get_info()
+        tp_src_power_val = our_info.availableEnergy
+        tp_src_power_ok = our_info.canTrigger and our_info.efficiency ~= -1
+        tp_src_required = our_info.requiredEnergy
         if not tp_src_power_ok then
-          abort_teleport(OUTCOME.SRC_POWER, "Source power dropped below threshold", true, true)
+          abort_teleport(OUTCOME.SRC_POWER, "Source spatial IO not ready (canTrigger false)", true, true)
           return
         end
         tp_countdown_remaining = tp_countdown_remaining - tick
@@ -404,6 +456,7 @@ return function(deps)
     else
       tp_src_power_val = 0
       tp_src_power_ok = false
+      tp_src_required = -1
       reset_sync_hang(seq)
       tp_stock_local = false
       if ae2.request_stock_item() then
@@ -433,6 +486,8 @@ return function(deps)
     if
       APP_STATE ~= "IDLE"
       or not redstone.is_red_high()
+      or not spatial_io.can_trigger()
+      or not spatial_io.has_input_cell()
       or not peers.get(dest_addr)
       or not peers.get(dest_addr).online
       or dest_addr == config.MY_ADDR
@@ -513,6 +568,14 @@ return function(deps)
       return
     end
     local unhealthy, reason = redstone.check_health()
+    if not unhealthy and (APP_STATE == "COUNTDOWN_LOCAL" or APP_STATE == "COUNTDOWN_REMOTE") then
+      local is_sender = APP_STATE == "COUNTDOWN_LOCAL"
+      local is_receiver = APP_STATE == "COUNTDOWN_REMOTE" and tp_active_dest == config.MY_ADDR
+      if (is_sender or is_receiver) and not spatial_io.is_chamber_valid() then
+        unhealthy = true
+        reason = "Spatial IO port not detected or chamber invalid (efficiency == -1)"
+      end
+    end
     if not unhealthy then
       return
     end
@@ -581,6 +644,10 @@ return function(deps)
         return
       end
       local unhealthy, reason = redstone.check_health()
+      if not unhealthy and not spatial_io.is_chamber_valid() then
+        unhealthy = true
+        reason = "Spatial IO port not detected or chamber invalid (efficiency == -1)"
+      end
       if unhealthy then
         modem.send({
           t = MT.TP_ACK,
@@ -597,29 +664,25 @@ return function(deps)
         end
         return
       end
-      local our_power = ae2.get_power()
-      local power_ok = our_power >= config.AE_POWER_REQUIRED
+      local info = spatial_io.get_info()
       modem.send({
         t = MT.TP_ACK,
         s = config.MY_ADDR,
         d = src,
         id = msg.id,
-        ok = power_ok,
-        pwr = our_power,
+        ok = true,
+        pwr = info.availableEnergy,
+        req = info.requiredEnergy,
       }, remote_addr)
-      if power_ok then
-        if is_summon_response then
-          if request_timeout_timer then
-            event.cancel(request_timeout_timer)
-            request_timeout_timer = nil
-          end
-          tp_summon_mode = false
-          tp_summon_target = nil
+      if is_summon_response then
+        if request_timeout_timer then
+          event.cancel(request_timeout_timer)
+          request_timeout_timer = nil
         end
-        start_countdown(src, config.MY_ADDR, msg.id, true, our_power, false)
-      elseif is_summon_response then
-        abort_teleport(OUTCOME.REFUSED, "Insufficient power to receive warp", false, true)
+        tp_summon_mode = false
+        tp_summon_target = nil
       end
+      start_countdown(src, config.MY_ADDR, msg.id, true, info.availableEnergy, info.requiredEnergy, false)
       return
     end
 
@@ -659,7 +722,7 @@ return function(deps)
         abort_teleport(outcome_code, why, true, true)
         return
       end
-      start_countdown(config.MY_ADDR, src, msg.id, true, msg.pwr or 0, true)
+      start_countdown(config.MY_ADDR, src, msg.id, true, msg.pwr or 0, msg.req or -1, true)
       return
     end
 
@@ -672,6 +735,7 @@ return function(deps)
         tp_countdown_remaining = msg.rem or 0
         tp_src_power_val = msg.sp or 0
         tp_src_power_ok = msg.sok == true
+        tp_src_required = msg.sreq or -1
         tp_dest_power_ok = false
         tp_dest_power_val = 0
         tp_dest_power_ts = 0
@@ -682,6 +746,7 @@ return function(deps)
         tp_countdown_remaining = msg.rem or tp_countdown_remaining
         tp_src_power_val = msg.sp or tp_src_power_val
         tp_src_power_ok = msg.sok == true
+        tp_src_required = msg.sreq or -1
         app.dirty = true
         if is_dest then
           if not tp_stock_local then
@@ -726,12 +791,13 @@ return function(deps)
       end
       tp_dest_power_val = msg.pwr or 0
       tp_dest_power_ok = msg.ok == true
+      tp_dest_required = msg.req or -1
       tp_dest_power_ts = computer.uptime()
       app.dirty = true
       if APP_STATE == "COUNTDOWN_LOCAL" then
         reset_dest_hang(msg.id)
         if not tp_dest_power_ok then
-          abort_teleport(OUTCOME.DST_POWER, "Destination power dropped below threshold", true, true)
+          abort_teleport(OUTCOME.DST_POWER, "Destination spatial IO not ready (canTrigger false)", true, true)
         end
       end
       return
@@ -739,9 +805,15 @@ return function(deps)
 
     if msg.t == MT.TP_FIRE then
       if APP_STATE == "COUNTDOWN_REMOTE" and msg.id == tp_active_seq then
-        if tp_active_dest == config.MY_ADDR and tp_stock_local and not ae2.verify_stock_item() then
-          abort_teleport(OUTCOME.STOCK_FAIL, "Spatial-cell stocking request missing at TP_FIRE", true, false)
-          return
+        if tp_active_dest == config.MY_ADDR then
+          if tp_stock_local and not ae2.verify_stock_item() then
+            abort_teleport(OUTCOME.STOCK_FAIL, "Spatial-cell stocking request missing at TP_FIRE", true, false)
+            return
+          end
+          tp_receiver_triggered = false
+          tp_receiver_cell_consumed = false
+        else
+          ae2.clear_stock_item()
         end
         cancel_countdown_timers()
         APP_STATE = "CONFIRMING"
@@ -761,9 +833,6 @@ return function(deps)
             )
           end
         end, 1)
-        if tp_active_dest == config.MY_ADDR and redstone.is_red_high() then
-          confirm_chamber_arrival()
-        end
       end
       return
     end
@@ -872,6 +941,10 @@ return function(deps)
       tp_dest_power_ok = tp_dest_power_ok,
       tp_dest_power_val = tp_dest_power_val,
       tp_dest_power_ts = tp_dest_power_ts,
+      tp_src_required = tp_src_required,
+      tp_dest_required = tp_dest_required,
+      tp_receiver_triggered = tp_receiver_triggered,
+      tp_receiver_cell_consumed = tp_receiver_cell_consumed,
       tp_outcome = tp_outcome,
       tp_outcome_reason = tp_outcome_reason,
       tp_outcome_seq = tp_outcome_seq,
@@ -904,7 +977,7 @@ return function(deps)
     handle_message = handle_message,
     request_teleport = request_teleport,
     summon_chamber = summon_chamber,
-    check_chamber_arrival = check_chamber_arrival,
+    check_receiver_confirm = check_receiver_confirm,
     abort_user_cancel = abort_user_cancel,
     abort_if_unhealthy = abort_if_unhealthy,
     discover = discover,

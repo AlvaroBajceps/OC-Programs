@@ -16,7 +16,15 @@
 --                         physically at this node. Exactly one node on the
 --                         network may hold Red high at any time; that node
 --                         is the only one allowed to initiate a teleport.
---   * Optional: an Adapter touching an me_controller for real AE power telemetry.
+--   * An Adapter touching an AE2 Spatial IO Port, on every node. Exposed as
+--     component.spatial_io; provides energy/readiness telemetry (canTrigger,
+--     availableEnergy, requiredEnergy, hasInputCell) and the trigger() call
+--     that compacts (sender) or plays back (receiver) the warp chamber.
+--   * An me_interface + database (upgrade) on every node: the receiver places
+--     a stocking request so the AE2 network routes the spatial storage cell
+--     (ejected by the sender's trigger) into its interface, feeding its
+--     spatial IO port. Sender/bystander nodes defensively clear their own
+--     interface during a warp.
 --
 -- Composition root: wires the lib/teleporter/* modules together, owns the
 -- bin-level timers/listeners, and runs the render/event loop. All policy and
@@ -28,6 +36,7 @@ local event = require("event")
 local config_factory = require("teleporter.config")
 local util_factory = require("teleporter.util")
 local ae2_factory = require("teleporter.ae2")
+local spatial_io_factory = require("teleporter.spatial_io")
 local peers_factory = require("teleporter.peers")
 local redstone_factory = require("teleporter.redstone")
 local display_factory = require("teleporter.display")
@@ -46,6 +55,7 @@ local app = {
 local config = config_factory()
 local util = util_factory()
 local ae2 = ae2_factory({ config = config })
+local spatial_io = spatial_io_factory()
 local peers = peers_factory({ config = config, app = app })
 local redstone = redstone_factory({ config = config, peers = peers, app = app })
 local display = display_factory()
@@ -59,6 +69,7 @@ local protocol = protocol_factory({
   util = util,
   modem = modem,
   ae2 = ae2,
+  spatial_io = spatial_io,
   redstone = redstone,
   peers = peers,
   app = app,
@@ -67,7 +78,7 @@ local ui = ui_factory({
   config = config,
   display = display,
   peers = peers,
-  ae2 = ae2,
+  spatial_io = spatial_io,
   redstone = redstone,
   protocol = protocol,
   app = app,
@@ -133,7 +144,7 @@ local function main()
     if redstone.is_red_high() ~= prev_red then
       protocol.heartbeat()
     end
-    protocol.check_chamber_arrival()
+    protocol.check_receiver_confirm()
   end
 
   modem_listener = event.listen("modem_message", function(_, _, remote_addr, port, _, payload)
@@ -166,6 +177,7 @@ local function main()
       return
     end
     protocol.abort_if_unhealthy()
+    protocol.check_receiver_confirm()
   end
 end
 

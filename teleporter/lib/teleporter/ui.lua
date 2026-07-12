@@ -10,7 +10,7 @@ return function(deps)
   local config = deps.config
   local display = deps.display
   local peers = deps.peers
-  local ae2 = deps.ae2
+  local spatial_io = deps.spatial_io
   local redstone = deps.redstone
   local protocol = deps.protocol
   local app = deps.app
@@ -159,19 +159,25 @@ return function(deps)
     gpu.setBackground(0x0A0A0A)
     gpu.fill(1, status_y, scr_w, 3, " ")
 
-    local our_power = ae2.get_power()
-    local power_ok = our_power >= config.AE_POWER_REQUIRED
-    local power_color = power_ok and 0x00FF00 or 0xFF4444
+    local info = spatial_io.get_info()
+    local port_state, port_color
+    if info.efficiency == -1 then
+      port_state = "FAULT"
+      port_color = 0xFF4444
+    elseif info.canTrigger then
+      port_state = "RDY"
+      port_color = 0x00FF00
+    else
+      port_state = "WAIT"
+      port_color = 0xFFAA00
+    end
     gpu.setBackground(0x0A0A0A)
     gpu.setForeground(0x888888)
-    gpu.set(2, status_y, "Power:")
-    gpu.setForeground(power_color)
-    gpu.set(
-      10,
-      status_y,
-      string.format("%.1fM AE / %.1fM AE req", our_power / 1000000, config.AE_POWER_REQUIRED / 1000000)
-    )
-    gpu.set(scr_w - 5, status_y, power_ok and " OK " or " LOW")
+    gpu.set(2, status_y, "Port:")
+    gpu.setForeground(port_color)
+    local req_str = info.requiredEnergy >= 0 and string.format("%.2fM", info.requiredEnergy / 1000000) or "N/A"
+    gpu.set(8, status_y, string.format("%.2fM / %s AE", info.availableEnergy / 1000000, req_str))
+    gpu.set(scr_w - #port_state, status_y, port_state)
 
     local live_count = 0
     local unhealthy_count = 0
@@ -227,7 +233,9 @@ return function(deps)
     if is_holder then
       btn_text = " INITIATE WARP "
       btn_enabled = (
-        peers.get_selected() ~= nil
+        spatial_io.can_trigger()
+        and spatial_io.has_input_cell()
+        and peers.get_selected() ~= nil
         and peers.get(peers.get_selected())
         and peers.get(peers.get_selected()).online
       )
@@ -406,14 +414,27 @@ return function(deps)
 
     local src_label, dest_label
     if role == "sender" then
-      src_label = "MY POWER:   "
-      dest_label = "DEST POWER: "
+      src_label = "MY PORT:   "
+      dest_label = "DEST PORT: "
     elseif role == "receiver" then
-      src_label = "SOURCE POWER: "
-      dest_label = "MY POWER:     "
+      src_label = "SOURCE PORT: "
+      dest_label = "MY PORT:     "
     else
-      src_label = "SOURCE POWER: "
-      dest_label = "DEST POWER:   "
+      src_label = "SOURCE PORT: "
+      dest_label = "DEST PORT:   "
+    end
+
+    local function port_line(label, ok, avail, req, stale)
+      local req_str = req >= 0 and string.format("%.2fM", req / 1000000) or "N/A"
+      return string.format(
+        "%s%s %.2fM / %s AE (%s%s)",
+        label,
+        ok and "\226\156\148" or "\226\156\150",
+        avail / 1000000,
+        req_str,
+        ok and "RDY" or "WAIT",
+        stale and " - STALE" or ""
+      )
     end
 
     gpu.setForeground(0xAAAAAA)
@@ -422,13 +443,7 @@ return function(deps)
       1,
       12,
       scr_w,
-      string.format(
-        "%s%s %.1fM AE (%s)",
-        src_label,
-        st.tp_src_power_ok and "\226\156\148" or "\226\156\150",
-        st.tp_src_power_val / 1000000,
-        st.tp_src_power_ok and "OK" or "INSUFFICIENT"
-      ),
+      port_line(src_label, st.tp_src_power_ok, st.tp_src_power_val, st.tp_src_required, false),
       st.tp_src_power_ok and 0x00FF00 or 0xFF4444,
       bg_color
     )
@@ -436,14 +451,7 @@ return function(deps)
       1,
       13,
       scr_w,
-      string.format(
-        "%s%s %.1fM AE (%s%s)",
-        dest_label,
-        st.tp_dest_power_ok and "\226\156\148" or "\226\156\150",
-        st.tp_dest_power_val / 1000000,
-        st.tp_dest_power_ok and "OK" or "INSUFFICIENT",
-        dest_stale and " - STALE" or ""
-      ),
+      port_line(dest_label, st.tp_dest_power_ok, st.tp_dest_power_val, st.tp_dest_required, dest_stale),
       st.tp_dest_power_ok and 0x00FF00 or 0xFF4444,
       bg_color
     )
@@ -514,18 +522,25 @@ return function(deps)
     gpu.setBackground(0x000000)
     gpu.setForeground(0xFFFFFF)
     if is_sender then
-      display.draw_text_centered(1, 5, scr_w, "Awaiting chamber arrival at " .. dest_name, 0xFFFFFF, 0x000000)
+      display.draw_text_centered(1, 5, scr_w, "Awaiting receiver confirmation at " .. dest_name, 0xFFFFFF, 0x000000)
     elseif is_receiver then
-      display.draw_text_centered(1, 5, scr_w, "Awaiting chamber arrival...", 0xFFFFFF, 0x000000)
+      if not st.tp_receiver_triggered then
+        display.draw_text_centered(1, 5, scr_w, "Stage 1: awaiting spatial cell arrival...", 0xFFFFFF, 0x000000)
+      elseif not st.tp_receiver_cell_consumed then
+        display.draw_text_centered(1, 5, scr_w, "Trigger fired - compacting chamber...", 0xFFAA00, 0x000000)
+      else
+        display.draw_text_centered(1, 5, scr_w, "Stage 2: cell reloading after trigger...", 0x00CCFF, 0x000000)
+      end
     else
       display.draw_text_centered(1, 5, scr_w, src_name .. "  \226\150\182  " .. dest_name, 0xFFFFFF, 0x000000)
     end
 
     gpu.setForeground(0xFFAA00)
-    display.draw_text_centered(1, 8, scr_w, "Chamber in transit", 0xFFAA00, 0x000000)
+    local transit_text = (is_receiver and st.tp_receiver_triggered) and "Chamber playing back" or "Cell in transit"
+    display.draw_text_centered(1, 8, scr_w, transit_text, 0xFFAA00, 0x000000)
 
     gpu.setForeground(0x888888)
-    display.draw_text_centered(1, 10, scr_w, "Warp has fired - waiting for Red signal confirmation", 0x888888, 0x000000)
+    display.draw_text_centered(1, 10, scr_w, "Warp has fired - polling spatial IO port", 0x888888, 0x000000)
     display.draw_text_centered(1, 12, scr_w, "Timeout in " .. config.CONFIRM_TIMEOUT .. "s", 0x888888, 0x000000)
   end
 

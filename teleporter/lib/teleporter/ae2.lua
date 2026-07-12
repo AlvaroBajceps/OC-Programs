@@ -1,38 +1,17 @@
--- AE2 stored-power telemetry, plus spatial-cell stocking gate for receiver-side
--- warp validation. When no me_controller/me_interface is reachable, power
--- reports 0 (fail-safe: missing telemetry must never satisfy the threshold).
--- me_controller and me_interface both inherit getStoredPower/getMaxStoredPower
--- from CommonNetworkAPI; stocking requires me_interface + database components.
+-- Spatial-cell stocking gate for the receiver side of a warp. The receiver
+-- places a stocking request on its me_interface so the AE2 network routes the
+-- spatial storage cell (ejected by the sender's spatial IO port trigger) into
+-- this interface, which then feeds the receiver's spatial IO port. Stocking
+-- requires me_interface + database components; power/readiness telemetry lives
+-- in spatial_io.lua. clear_stock_item is also called on sender/bystander nodes
+-- to defensively clear any stray stocking request during a warp.
 
 local component = require("component")
 
 return function(deps)
   local config = deps.config
 
-  local function find_ae2_component()
-    if component.isAvailable("me_controller") then
-      return component.me_controller
-    end
-    if component.isAvailable("me_interface") then
-      return component.me_interface
-    end
-    return nil
-  end
-
   return {
-    get_power = function()
-      local proxy = find_ae2_component()
-      if proxy then
-        local ok, val = pcall(function()
-          return proxy.getStoredPower()
-        end)
-        if ok and type(val) == "number" then
-          return val
-        end
-      end
-      return 0
-    end,
-
     request_stock_item = function()
       if not component.isAvailable("me_interface") or not component.isAvailable("database") then
         return false

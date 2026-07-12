@@ -89,7 +89,8 @@ bin/teleporter.lua          composition root: wires modules, owns event loop
 lib/teleporter/config.lua   constants, OUTCOME/MT enums, node identity (name)
 lib/teleporter/util.lua     serialization pack/unpack + small helpers
 lib/teleporter/modem.lua    wired-modem transport (send/broadcast)
-lib/teleporter/ae2.lua      me_controller power telemetry (+mock fallback)
+lib/teleporter/ae2.lua      me_interface spatial-cell stocking (request/verify/clear)
+lib/teleporter/spatial_io.lua  spatial IO port telemetry + trigger (getInformation, trigger)
 lib/teleporter/redstone.lua bundled-cable health sensing (Black/Red signals)
 lib/teleporter/peers.lua    peer directory + selected-destination state
 lib/teleporter/display.lua  GPU setup, double-buffered drawing primitives
@@ -107,12 +108,18 @@ in `protocol.lua` and is exposed read-only via `protocol.snapshot()`.
 `IDLE` → `REQUESTING` (sender awaits `TP_ACK` after `TP_REQ`; or non-holder
 awaits `TP_REQ` after `TP_SUMMON` — tracked via `tp_summon_mode`) →
 `COUNTDOWN_LOCAL` (sender counts down, broadcasts `TP_SYNC`) → `CONFIRMING`
-(sender broadcasts `TP_FIRE` at T-0, waits for chamber-arrival confirmation)
-→ `COOLDOWN` (all nodes). Receivers and bystanders enter `COUNTDOWN_REMOTE`
-directly on the first `TP_SYNC`, then `CONFIRMING` on `TP_FIRE`. The
-receiver detects Red signal going high (chamber arrived) and broadcasts
-`TP_DONE`; if the chamber doesn't arrive within `CONFIRM_TIMEOUT`, the
-sender enters `RECOVERING` (failover hook), then broadcasts `TP_DONE` with
-`CHAMBER_LOST` outcome. Any countdown/confirming state can transition to
-`COOLDOWN` via `TP_ABORT` / `TP_DONE` / hardware fault / power loss. See
-`protocol.lua` header comment for the full message sequence.
+(sender calls `spatial_io.trigger()` at T-0, broadcasts `TP_FIRE`, waits for
+receiver confirmation) → `COOLDOWN` (all nodes). Receivers and bystanders enter
+`COUNTDOWN_REMOTE` directly on the first `TP_SYNC`, then `CONFIRMING` on
+`TP_FIRE`. The receiver runs a **two-stage confirm** polled from its own
+`spatial_io.getInformation()`: Stage 1 — waits for `hasInputCell && canTrigger`
+(the cell arrived from the sender + energy sufficient), then calls
+`spatial_io.trigger()` (chamber plays back, Red goes high); Stage 2 — waits for
+`hasInputCell` to return true (cell reloaded), then broadcasts `TP_DONE`. Both
+stages must complete within `CONFIRM_TIMEOUT` or the sender enters
+`RECOVERING` (failover hook) and broadcasts `TP_DONE` with `CHAMBER_LOST`.
+Sender and bystander nodes defensively `clear_stock_item()` on their own
+me_interface at `TP_FIRE`; the receiver clears its stocking request only when
+Stage 2 completes (via `start_cooldown`). Any countdown/confirming state can
+transition to `COOLDOWN` via `TP_ABORT` / `TP_DONE` / hardware fault / power
+loss. See `protocol.lua` header comment for the full message sequence.
