@@ -30,13 +30,16 @@ return function()
     if not ok or type(info) ~= "table" then
       return INVALID
     end
+    -- The GTNH OC driver reports requiredEnergy divided by 10 and reports -1
+    -- when the spatial setup is invalid. Apply a safety margin: the 12.5
+    -- coefficient embeds the x10 correction (12.5 * raw == 1.25 * true) for a
+    -- 25% buffer, plus a 1M AE floor. canTrigger stays the authoritative
+    -- readiness gate; this value drives the displayed/forwarded "energy needed".
+    local raw_req = type(info.requiredEnergy) == "number" and info.requiredEnergy or -1
     return {
       availableEnergy = type(info.availableEnergy) == "number" and info.availableEnergy or 0,
       maxEnergy = type(info.maxEnergy) == "number" and info.maxEnergy or 0,
-      -- requiredEnergy/efficiency read -1 when the spatial setup is invalid;
-      -- the upstream driver also divides requiredEnergy by 10, so the read
-      -- value is compared as-is (canTrigger is the authoritative gate).
-      requiredEnergy = type(info.requiredEnergy) == "number" and info.requiredEnergy or -1,
+      requiredEnergy = raw_req >= 0 and (1000000 + 12.5 * raw_req) or -1,
       canTrigger = info.canTrigger == true,
       efficiency = type(info.efficiency) == "number" and info.efficiency or -1,
       hasInputCell = info.hasInputCell == true,
