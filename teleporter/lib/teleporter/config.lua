@@ -43,8 +43,8 @@ return function()
     PORT = 4200,
     HEARTBEAT_INTERVAL = 60,
     OFFLINE_TIMEOUT = 150,
-    COOLDOWN_DURATION = 15,
-    COUNTDOWN_DURATION = 10,
+    COOLDOWN_DURATION = 3,
+    COUNTDOWN_DURATION = 5,
     -- TP_SYNC re-broadcast cadence (sender is the sole transmitter, so 4 Hz is
     -- cheap). Must evenly divide COUNTDOWN_DURATION, else the float countdown
     -- never lands on exactly 0 and the fire trigger breaks.
