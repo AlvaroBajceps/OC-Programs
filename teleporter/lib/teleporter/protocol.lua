@@ -385,7 +385,12 @@ return function(deps)
   local function broadcast_tp_pwr(seq)
     local info = spatial_io.get_info()
     tp_dest_power_val = info.availableEnergy
-    tp_dest_power_ok = info.canTrigger and info.efficiency ~= -1
+    -- During countdown the receiver has no cell yet (the sender has not
+    -- fired), so canTrigger is legitimately false. The readiness gate is
+    -- whether the chamber structure itself is valid (efficiency /= -1).
+    -- canTrigger becomes the authoritative gate only in CONFIRMING Stage 1
+    -- (check_receiver_confirm), after the cell arrives.
+    tp_dest_power_ok = info.efficiency ~= -1
     tp_dest_required = info.requiredEnergy
     tp_dest_power_ts = computer.uptime()
     modem.send({
@@ -797,7 +802,7 @@ return function(deps)
       if APP_STATE == "COUNTDOWN_LOCAL" then
         reset_dest_hang(msg.id)
         if not tp_dest_power_ok then
-          abort_teleport(OUTCOME.DST_POWER, "Destination spatial IO not ready (canTrigger false)", true, true)
+          abort_teleport(OUTCOME.DST_POWER, "Destination spatial IO setup invalid (efficiency == -1)", true, true)
         end
       end
       return
