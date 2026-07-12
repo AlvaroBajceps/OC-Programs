@@ -43,7 +43,7 @@ return function(deps)
     local count = 0
     for _, m in ipairs(machines) do
       local s = m.get_state()
-      if s.online and not s.needs_maintenance then
+      if s.online and not s.needs_maintenance and not s.low_energy then
         count = count + 1
       end
     end
@@ -243,15 +243,15 @@ return function(deps)
     local eligible = {}
     for _, m in ipairs(machines) do
       local s = m.get_state()
-      if s.online and not s.needs_maintenance then
+      if s.online and not s.needs_maintenance and not s.low_energy then
         eligible[#eligible + 1] = m
       end
     end
 
-    -- Maintenance / offline pumps: always off.
+    -- Maintenance / offline / low-energy pumps: always off.
     for _, m in ipairs(machines) do
       local s = m.get_state()
-      if s.work_allowed and (not s.online or s.needs_maintenance) then
+      if s.work_allowed and (not s.online or s.needs_maintenance or s.low_energy) then
         m.set_work_allowed(false, current_uptime)
       end
     end

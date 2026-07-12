@@ -9,6 +9,7 @@ local component = require("component")
 return function(deps)
   local address = deps.address
   local index = deps.index
+  local low_eu_pct = deps.low_eu_pct or 0.20
 
   local proxy = component.proxy(address)
 
@@ -27,6 +28,7 @@ return function(deps)
     max_progress = nil,
     on_since = nil,
     sensor_lines = {},
+    low_energy = false,
   }
 
   -- Strip Minecraft § color codes (UTF-8 2-byte sequence "\194\167" + letter).
@@ -61,6 +63,32 @@ return function(deps)
     return false, nil
   end
 
+  local function _strip_codes(s)
+    return s:gsub("\194\167%w?", "")
+  end
+
+  local function _parse_eu_from_sensor(lines)
+    for i = 1, #lines do
+      local cleaned = _strip_codes(lines[i] or "")
+      local stored_str, cap_str = cleaned:match("Stored Energy:%s*(%d[%d,]*)%s*EU%s*/%s*(%d[%d,]*)%s*EU")
+      if stored_str then
+        return tonumber(stored_str:gsub(",", "")), tonumber(cap_str:gsub(",", ""))
+      end
+    end
+    return nil, nil
+  end
+
+  local function _parse_progress_from_sensor(lines)
+    for i = 1, #lines do
+      local cleaned = _strip_codes(lines[i] or "")
+      local prog_str, max_str = cleaned:match("Progress:%s*(%d[%d,]*)%s*s%s*/%s*(%d[%d,]*)%s*s")
+      if prog_str then
+        return tonumber(prog_str:gsub(",", "")), tonumber(max_str:gsub(",", ""))
+      end
+    end
+    return nil, nil
+  end
+
   local function refresh()
     local pcall_result
 
@@ -89,25 +117,17 @@ return function(deps)
     pcall_result = { pcall(proxy.getName, proxy) }
     state.name = (pcall_result[1] and pcall_result[2]) or "?"
 
-    -- Stored EU / EU capacity. Fall through the two naming conventions.
-    pcall_result = { pcall(proxy.getStoredEU, proxy) }
-    if not pcall_result[1] or type(pcall_result[2]) ~= "number" then
-      pcall_result = { pcall(proxy.getEUStored, proxy) }
+    -- Stored EU / EU capacity parsed from sensor lines (direct API methods
+    -- return 0 on this machine controller — only getSensorInformation works).
+    state.stored_eu, state.eu_capacity = _parse_eu_from_sensor(state.sensor_lines)
+
+    if state.stored_eu and state.eu_capacity and state.eu_capacity > 0 then
+      state.low_energy = state.stored_eu / state.eu_capacity < low_eu_pct
+    else
+      state.low_energy = false
     end
-    state.stored_eu = (pcall_result[1] and type(pcall_result[2]) == "number") and pcall_result[2] or nil
 
-    pcall_result = { pcall(proxy.getEUCapacity, proxy) }
-    if not pcall_result[1] or type(pcall_result[2]) ~= "number" then
-      pcall_result = { pcall(proxy.getEUMaxStored, proxy) }
-    end
-    state.eu_capacity = (pcall_result[1] and type(pcall_result[2]) == "number") and pcall_result[2] or nil
-
-    -- Work progress.
-    pcall_result = { pcall(proxy.getWorkProgress, proxy) }
-    state.progress = (pcall_result[1] and type(pcall_result[2]) == "number") and pcall_result[2] or nil
-
-    pcall_result = { pcall(proxy.getWorkMaxProgress, proxy) }
-    state.max_progress = (pcall_result[1] and type(pcall_result[2]) == "number") and pcall_result[2] or nil
+    state.progress, state.max_progress = _parse_progress_from_sensor(state.sensor_lines)
 
     state.online = true
   end
@@ -128,6 +148,7 @@ return function(deps)
       max_progress = state.max_progress,
       on_since = state.on_since,
       sensor_lines = state.sensor_lines,
+      low_energy = state.low_energy,
     }
   end
 

@@ -18,6 +18,10 @@ return function()
     -- Below this cold fraction, refuse to enable NEW pumps (caution cap).
     COLD_CAUTION_PCT = 0.25,
 
+    -- Below this EU fraction, a pump is excluded from the active pool (like
+    -- maintenance). Running a DEHP with insufficient energy is useless.
+    PUMP_LOW_EU_PCT = 0.20,
+
     -- Hot tank below this fraction → enable another pump.
     HOT_LOW_PCT = 0.30,
 

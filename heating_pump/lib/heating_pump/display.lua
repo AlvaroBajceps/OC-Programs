@@ -200,6 +200,17 @@ return function(deps)
     return n
   end
 
+  local function _count_low_eu()
+    local n = 0
+    for _, m in ipairs(machines) do
+      local s = m.get_state()
+      if s.low_energy then
+        n = n + 1
+      end
+    end
+    return n
+  end
+
   local function render()
     gpu.setActiveBuffer(back_buf)
     gpu.setBackground(COL.BLACK)
@@ -362,6 +373,9 @@ return function(deps)
       elseif s.needs_maintenance then
         status_char = "X"
         status_color = COL.RED
+      elseif s.low_energy then
+        status_char = "!"
+        status_color = COL.YELLOW
       elseif s.work_allowed and s.machine_active then
         status_char = "O"
         status_color = COL.GREEN
@@ -378,6 +392,8 @@ return function(deps)
         status_text = "OFFLINE"
       elseif s.needs_maintenance then
         status_text = "MAINT"
+      elseif s.low_energy then
+        status_text = "LOW EU"
       elseif s.work_allowed then
         status_text = "ON"
       else
@@ -457,6 +473,9 @@ return function(deps)
       string.format("State: %s %-8s  Active: %d/%d healthy", mode_dot, cs.mode, active_pumps, cs.healthy_count)
     if _count_maint() > 0 then
       mode_text = mode_text .. string.format("  (%d maint)", _count_maint())
+    end
+    if _count_low_eu() > 0 then
+      mode_text = mode_text .. string.format("  (%d low EU)", _count_low_eu())
     end
     draw_text(2, 15, mode_text, mode_color, COL.BLACK)
 
