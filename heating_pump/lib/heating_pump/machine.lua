@@ -72,7 +72,7 @@ return function(deps)
       local cleaned = _strip_codes(lines[i] or "")
       local stored_str, cap_str = cleaned:match("Stored Energy:%s*(%d[%d,]*)%s*EU%s*/%s*(%d[%d,]*)%s*EU")
       if stored_str then
-        return tonumber(stored_str:gsub(",", "")), tonumber(cap_str:gsub(",", ""))
+        return tonumber((stored_str:gsub(",", ""))), tonumber((cap_str:gsub(",", "")))
       end
     end
     return nil, nil
@@ -83,7 +83,7 @@ return function(deps)
       local cleaned = _strip_codes(lines[i] or "")
       local prog_str, max_str = cleaned:match("Progress:%s*(%d[%d,]*)%s*s%s*/%s*(%d[%d,]*)%s*s")
       if prog_str then
-        return tonumber(prog_str:gsub(",", "")), tonumber(max_str:gsub(",", ""))
+        return tonumber((prog_str:gsub(",", ""))), tonumber((max_str:gsub(",", "")))
       end
     end
     return nil, nil

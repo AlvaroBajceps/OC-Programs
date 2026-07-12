@@ -18,7 +18,7 @@ local function _parse_num(s)
   if not s then
     return nil
   end
-  return tonumber(s:gsub(",", ""))
+  return tonumber((s:gsub(",", "")))
 end
 
 return function(deps)
