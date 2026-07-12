@@ -9,7 +9,7 @@ local component = require("component")
 return function(deps)
   local address = deps.address
   local index = deps.index
-  local low_eu_pct = deps.low_eu_pct or 0.20
+  local low_eu_threshold = deps.low_eu_threshold or 12000
 
   local proxy = component.proxy(address)
 
@@ -29,6 +29,8 @@ return function(deps)
     on_since = nil,
     sensor_lines = {},
     low_energy = false,
+    retry_pending = false,
+    last_retry_time = nil,
   }
 
   -- Strip Minecraft § color codes (UTF-8 2-byte sequence "\194\167" + letter).
@@ -121,8 +123,8 @@ return function(deps)
     -- return 0 on this machine controller — only getSensorInformation works).
     state.stored_eu, state.eu_capacity = _parse_eu_from_sensor(state.sensor_lines)
 
-    if state.stored_eu and state.eu_capacity and state.eu_capacity > 0 then
-      state.low_energy = state.stored_eu / state.eu_capacity < low_eu_pct
+    if state.stored_eu then
+      state.low_energy = state.stored_eu < low_eu_threshold
     else
       state.low_energy = false
     end
@@ -149,6 +151,8 @@ return function(deps)
       on_since = state.on_since,
       sensor_lines = state.sensor_lines,
       low_energy = state.low_energy,
+      retry_pending = state.retry_pending,
+      last_retry_time = state.last_retry_time,
     }
   end
 
@@ -175,12 +179,18 @@ return function(deps)
     return uptime_fn() - state.on_since
   end
 
+  local function set_retry_status(retry_pending, last_retry_time)
+    state.retry_pending = retry_pending
+    state.last_retry_time = last_retry_time
+  end
+
   refresh()
 
   return {
     refresh = refresh,
     get_state = get_state,
     set_work_allowed = set_work_allowed,
+    set_retry_status = set_retry_status,
     uptime_on = uptime_on,
   }
 end

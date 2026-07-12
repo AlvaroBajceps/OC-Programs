@@ -18,6 +18,7 @@ return function(deps)
     last_action = "Initializing",
     last_action_time = nil,
     projected_hot_pct = nil,
+    retry_next_at = {}, -- pump index → uptime when next setWorkAllowed attempt is allowed
   }
   local history = {}
 
@@ -248,33 +249,60 @@ return function(deps)
       end
     end
 
-    -- Maintenance / offline / low-energy pumps: always off.
-    for _, m in ipairs(machines) do
-      local s = m.get_state()
-      if s.work_allowed and (not s.online or s.needs_maintenance or s.low_energy) then
-        m.set_work_allowed(false, current_uptime)
+    local function _eligible_rank(target)
+      for j, em in ipairs(eligible) do
+        if em == target then
+          return j
+        end
       end
+      return nil
     end
 
-    -- 3c. Reconcile desired vs actual.
-    for i, m in ipairs(eligible) do
+    -- 3c. Reconcile desired vs actual for EVERY pump. Some DEHP controllers
+    -- accept setWorkAllowed (pcall ok) but never flip isWorkAllowed — retry
+    -- on RETRY_INTERVAL_S boundaries so the mismatch is visible and the call
+    -- eventually takes effect.
+    for _, m in ipairs(machines) do
       local s = m.get_state()
-      local should_be_on = i <= state.desired_active
+      local idx = s.index
 
-      if should_be_on and not s.work_allowed then
-        -- Enable this pump.
-        m.set_work_allowed(true, current_uptime)
-        state.last_action = string.format("Enabled pump %d (hot %.0f%%)", s.index, hot_pct * 100)
-        state.last_action_time = current_uptime
-        _push_history(state.last_action)
-      elseif not should_be_on and s.work_allowed then
-        -- Disable, but respect min-runtime.
-        local runtime = s.on_since and (current_uptime - s.on_since) or 9999
-        if runtime >= config.MIN_RUNTIME_S then
-          m.set_work_allowed(false, current_uptime)
-          state.last_action = string.format("Disabled pump %d (hot %.0f%%)", s.index, hot_pct * 100)
+      local rank = _eligible_rank(m)
+      local should_be_on = rank ~= nil and rank <= state.desired_active
+      local enforce_min_runtime = rank ~= nil
+
+      local mismatched = should_be_on ~= s.work_allowed
+      if not mismatched then
+        m.set_retry_status(false, nil)
+        state.retry_next_at[idx] = nil
+      else
+        local next_allowed = state.retry_next_at[idx]
+        -- First attempt for a freshly-detected mismatch is immediate;
+        -- subsequent attempts are throttled by RETRY_INTERVAL_S.
+        local can_retry = next_allowed == nil or current_uptime >= next_allowed
+
+        local min_runtime_locked = false
+        if enforce_min_runtime and not should_be_on and s.on_since then
+          local runtime = current_uptime - s.on_since
+          if runtime < config.MIN_RUNTIME_S then
+            min_runtime_locked = true
+          end
+        end
+
+        if min_runtime_locked then
+          -- Intentional hold — don't mark retry_pending.
+          m.set_retry_status(false, nil)
+        elseif can_retry then
+          m.set_work_allowed(should_be_on, current_uptime)
+          state.retry_next_at[idx] = current_uptime + config.RETRY_INTERVAL_S
+          local verb = should_be_on and "Enabled" or "Disabled"
+          state.last_action = string.format("%s pump %d (hot %.0f%%)", verb, idx, hot_pct * 100)
           state.last_action_time = current_uptime
           _push_history(state.last_action)
+          -- Optimistically clear retry_pending; the next tick's refresh
+          -- will re-flag if isWorkAllowed() still disagrees.
+          m.set_retry_status(false, nil)
+        else
+          m.set_retry_status(true, next_allowed)
         end
       end
     end

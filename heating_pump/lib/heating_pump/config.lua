@@ -18,9 +18,18 @@ return function()
     -- Below this cold fraction, refuse to enable NEW pumps (caution cap).
     COLD_CAUTION_PCT = 0.25,
 
-    -- Below this EU fraction, a pump is excluded from the active pool (like
-    -- maintenance). Running a DEHP with insufficient energy is useless.
-    PUMP_LOW_EU_PCT = 0.20,
+    -- Below this stored EU value (flat, not a fraction), a pump is excluded
+    -- from the active pool (like maintenance). Running a DEHP with insufficient
+    -- energy is useless. DEHP controllers report 17K EU capacity, so 12K leaves
+    -- headroom before the machine stalls.
+    PUMP_LOW_EU_THRESHOLD = 12000,
+
+    -- When the controller's desired work-allowed state for a pump doesn't
+    -- match what isWorkAllowed() reports, re-assert setWorkAllowed on this
+    -- interval. Some DEHP controllers accept the call (pcall succeeds) but
+    -- don't actually flip the working flag — retrying exposes the mismatch
+    -- and eventually pushes the state through.
+    RETRY_INTERVAL_S = 5.0,
 
     -- Hot tank below this fraction → enable another pump.
     HOT_LOW_PCT = 0.30,

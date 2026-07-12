@@ -211,6 +211,17 @@ return function(deps)
     return n
   end
 
+  local function _count_retry()
+    local n = 0
+    for _, m in ipairs(machines) do
+      local s = m.get_state()
+      if s.retry_pending then
+        n = n + 1
+      end
+    end
+    return n
+  end
+
   local function render()
     gpu.setActiveBuffer(back_buf)
     gpu.setBackground(COL.BLACK)
@@ -376,6 +387,9 @@ return function(deps)
       elseif s.low_energy then
         status_char = "!"
         status_color = COL.YELLOW
+      elseif s.retry_pending then
+        status_char = "~"
+        status_color = COL.YELLOW
       elseif s.work_allowed and s.machine_active then
         status_char = "O"
         status_color = COL.GREEN
@@ -394,6 +408,8 @@ return function(deps)
         status_text = "MAINT"
       elseif s.low_energy then
         status_text = "LOW EU"
+      elseif s.retry_pending then
+        status_text = "RETRY"
       elseif s.work_allowed then
         status_text = "ON"
       else
@@ -476,6 +492,9 @@ return function(deps)
     end
     if _count_low_eu() > 0 then
       mode_text = mode_text .. string.format("  (%d low EU)", _count_low_eu())
+    end
+    if _count_retry() > 0 then
+      mode_text = mode_text .. string.format("  (%d retry)", _count_retry())
     end
     draw_text(2, 15, mode_text, mode_color, COL.BLACK)
 

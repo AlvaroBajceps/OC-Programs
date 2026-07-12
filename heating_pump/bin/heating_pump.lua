@@ -145,7 +145,7 @@ local function main()
 
   machines = {}
   for i, addr in ipairs(pump_addrs) do
-    local m = machine_factory({ address = addr, index = i, low_eu_pct = config.PUMP_LOW_EU_PCT })
+    local m = machine_factory({ address = addr, index = i, low_eu_threshold = config.PUMP_LOW_EU_THRESHOLD })
     machines[#machines + 1] = m
   end
 
