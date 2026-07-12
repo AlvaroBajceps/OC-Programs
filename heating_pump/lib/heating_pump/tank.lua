@@ -37,10 +37,10 @@ return function(deps)
   }
 
   -- Detect component type: gt_machine exposes getSensorInformation, transposer exposes getTankCount.
-  local is_gt_machine = pcall(proxy.getSensorInformation, proxy)
+  local is_gt_machine = pcall(proxy.getSensorInformation)
 
   local function _refresh_gt_machine()
-    local ok, lines = pcall(proxy.getSensorInformation, proxy)
+    local ok, lines = pcall(proxy.getSensorInformation)
     if not ok or type(lines) ~= "table" then
       state.online = false
       state.amount = nil
@@ -90,9 +90,9 @@ return function(deps)
       return
     end
 
-    local ok, fluid = pcall(proxy.getFluidInTank, proxy, state.side, 1)
+    local ok, fluid = pcall(proxy.getFluidInTank, state.side, 1)
     if not ok or type(fluid) ~= "table" then
-      local ok2, lvl = pcall(proxy.getTankLevel, proxy, state.side, 1)
+      local ok2, lvl = pcall(proxy.getTankLevel, state.side, 1)
       if ok2 and type(lvl) == "number" then
         state.amount = lvl
       else
@@ -108,7 +108,7 @@ return function(deps)
       state.label = fluid.label
     end
 
-    local ok3, cap = pcall(proxy.getTankCapacity, proxy, state.side, 1)
+    local ok3, cap = pcall(proxy.getTankCapacity, state.side, 1)
     if not ok3 or type(cap) ~= "number" or cap <= 0 then
       state.capacity = nil
     else
@@ -121,7 +121,7 @@ return function(deps)
   if not is_gt_machine then
     local SIDE_ORDER = { sides.down, sides.up, sides.north, sides.south, sides.west, sides.east } -- luacheck: ignore 131
     for _, side_val in ipairs(SIDE_ORDER) do
-      local ok, count = pcall(proxy.getTankCount, proxy, side_val)
+      local ok, count = pcall(proxy.getTankCount, side_val)
       if ok and type(count) == "number" and count >= 1 then
         state.side = side_val
         state.online = true

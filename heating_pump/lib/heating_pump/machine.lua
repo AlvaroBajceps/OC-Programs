@@ -95,7 +95,7 @@ return function(deps)
     local pcall_result
 
     -- Sensor information.
-    pcall_result = { pcall(proxy.getSensorInformation, proxy) }
+    pcall_result = { pcall(proxy.getSensorInformation) }
     if not pcall_result[1] then
       state.online = false
       return
@@ -108,15 +108,15 @@ return function(deps)
     state.maintenance_reason = reason
 
     -- Work allowed.
-    pcall_result = { pcall(proxy.isWorkAllowed, proxy) }
+    pcall_result = { pcall(proxy.isWorkAllowed) }
     state.work_allowed = pcall_result[1] and pcall_result[2] or false
 
     -- Machine active.
-    pcall_result = { pcall(proxy.isMachineActive, proxy) }
+    pcall_result = { pcall(proxy.isMachineActive) }
     state.machine_active = pcall_result[1] and pcall_result[2] or false
 
     -- Name.
-    pcall_result = { pcall(proxy.getName, proxy) }
+    pcall_result = { pcall(proxy.getName) }
     state.name = (pcall_result[1] and pcall_result[2]) or "?"
 
     -- Stored EU / EU capacity parsed from sensor lines (direct API methods
@@ -157,7 +157,7 @@ return function(deps)
   end
 
   local function set_work_allowed(enabled, current_uptime)
-    local ok = pcall(proxy.setWorkAllowed, proxy, enabled) -- luacheck: ignore 122
+    local ok = pcall(proxy.setWorkAllowed, enabled)
     if ok then
       state.work_allowed = enabled
       if enabled then

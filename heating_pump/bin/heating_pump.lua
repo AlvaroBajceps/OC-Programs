@@ -39,7 +39,7 @@ local display
 
 local function classify_gt_component(address)
   local proxy = component.proxy(address)
-  local ok, name = pcall(proxy.getName, proxy)
+  local ok, name = pcall(proxy.getName)
   if ok and name then
     local lower = name:lower()
     if lower:find("tank") then
@@ -120,7 +120,7 @@ local function main()
     if kind == "gt_machine" then
       local typeof = classify_gt_component(address)
       local proxy = component.proxy(address)
-      local _, nm = pcall(proxy.getName, proxy)
+      local _, nm = pcall(proxy.getName)
       print(string.format("  gt_machine %s → %s (name: %s)", address:sub(1, 8), typeof, tostring(nm)))
       if typeof == "pump" then
         pump_addrs[#pump_addrs + 1] = address
