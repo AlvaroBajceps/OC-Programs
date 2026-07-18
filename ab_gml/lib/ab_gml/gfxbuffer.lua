@@ -1,4 +1,4 @@
-require("ab_gml.fix_bit32")
+require("ab_fix_bit32")
 local component=require("component")
 local unicode=require("unicode")
 local len = unicode.len

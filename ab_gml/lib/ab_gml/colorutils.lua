@@ -6,7 +6,7 @@ Shared by gfxbuffer and canvas, and possibly gml later?
 
 --]]
 local colorutils = {VERSION="1.0"}
-require("ab_gml.fix_bit32")
+require("ab_fix_bit32")
 
 
 function colorutils.convColor_hto8(hex)
