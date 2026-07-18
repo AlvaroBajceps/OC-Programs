@@ -8,7 +8,7 @@ parents, and do sorting and grouping to optimally draw those buffers up to their
 
 --]]
 local component=require("component")
-local colorutils=require("colorutils")
+local colorutils=require("ab_gml.colorutils")
 
 --copy these to file local, they're called a lot in performance-intensive loops
 local convColor_hto8=colorutils.convColor_hto8

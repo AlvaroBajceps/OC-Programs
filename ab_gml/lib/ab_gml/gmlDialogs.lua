@@ -6,7 +6,7 @@ These dialogs can be used even whether or not your program otherwise
 uses the gml library.
 
 --]]
-local gml=require("gml")
+local gml=require("ab_gml")
 local shell=require("shell")
 local filesystem=require("filesystem")
 

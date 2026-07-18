@@ -25,7 +25,7 @@ local shell=require("shell")
 local filesystem=require("filesystem")
 local keyboard=require("keyboard")
 local unicode=require("unicode")
-local gfxbuffer=require("gfxbuffer")
+local gfxbuffer=require("ab_gml.gfxbuffer")
 local process = require("process")
 
 local len = unicode.len
@@ -100,8 +100,8 @@ function gml.loadStyle(name)
 
   local filepath
 
-  --search for styles in working directory, running program directory, /lib /usr/lib. Just because.
-  local dirs={shell.getWorkingDirectory(),shell.resolve(process.info().path, 'lua'):match("^(.*/).+$"), "/lib/", "/usr/lib/"}
+  --search for styles in working directory, running program directory, /usr/share/ab_gml/theme.d /lib /usr/lib
+  local dirs={shell.getWorkingDirectory(),shell.resolve(process.info().path, 'lua'):match("^(.*/).+$"), "/usr/share/ab_gml/theme.d/", "/lib/", "/usr/lib/"}
   if dirs[1]~="/" then
     dirs[1]=dirs[1].."/"
   end
