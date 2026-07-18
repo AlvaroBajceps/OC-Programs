@@ -9,8 +9,8 @@ point.__index = point
 ---@param x number
 ---@param y number
 function point.new(x,y)
-    checkArg(x, "number")
-    checkArg(y, "number")
+    checkArg(1, x, "number")
+    checkArg(2, y, "number")
     local self = setmetatable({x = x, y = y}, point)
     return self
 end
