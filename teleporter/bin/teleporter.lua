@@ -92,7 +92,7 @@ local ui = ui_factory({
   app = app,
 })
 
-local hb_timer, refresh_timer, discover_timer
+local hb_timer, refresh_timer, discover_timer, wol_timer
 local modem_listener, touch_listener, key_listener, redstone_listener
 
 local function shutdown()
@@ -110,6 +110,9 @@ local function shutdown()
   end
   if discover_timer then
     event.cancel(discover_timer)
+  end
+  if wol_timer then
+    event.cancel(wol_timer)
   end
 
   if modem_listener then
@@ -174,9 +177,21 @@ local function main()
     end
   end, math.huge)
 
+  local function schedule_wol()
+    local delay = util.random_delay(config.WOL_INTERVAL - config.WOL_JITTER, config.WOL_INTERVAL + config.WOL_JITTER)
+    wol_timer = event.timer(delay, function()
+      if app.shutting_down then
+        return
+      end
+      modem.wake()
+      schedule_wol()
+    end, 1)
+  end
+
   refresh_redstone()
   protocol.discover()
   discover_timer = event.timer(60, protocol.discover, math.huge)
+  schedule_wol()
 
   app.dirty = true
 

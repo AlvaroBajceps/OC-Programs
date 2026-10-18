@@ -19,8 +19,12 @@ return function(deps)
         error("Modem is not wired. Use a wired Network Card.")
       end
       m.open(config.PORT)
+      m.setWakeMessage(config.WOL_MESSAGE)
       modem = m
       return m
+    end,
+    wake = function()
+      modem.broadcast(config.PORT, config.WOL_MESSAGE)
     end,
     send = function(tbl, target)
       local payload = util.pack(tbl)

@@ -156,3 +156,16 @@ advertises its own loader state over `TP_SYNC` (`sa`), which is display-only —
 a bystander never aborts on it. `ak` is parsed nil-tolerantly (`msg.ak ~=
 false`) so an older peer that omits the field is not blocked. Like the energy
 gate this is a soft readiness check, not part of `check_health()`.
+
+### Wake-on-LAN
+
+Every node installs `config.WOL_MESSAGE` (`teleporter_wol`) as its modem wake
+message at `modem.setup`, and broadcasts that exact string every
+`WOL_INTERVAL +/- WOL_JITTER` seconds (60 +/- 5) via a self-rescheduling timer
+in the composition root. A powered-off node cannot broadcast, so any single
+running peer keeps the rest of the wired segment bootable. The jitter keeps
+peers that booted together from firing in lockstep (a once-a-minute convoy).
+Wake matching is port-independent and consumes only the packet's first
+argument, so the broadcast rides the normal teleporter port: running peers see
+a `modem_message` whose payload `util.unpack_msg` rejects, and
+`handle_message` drops it.

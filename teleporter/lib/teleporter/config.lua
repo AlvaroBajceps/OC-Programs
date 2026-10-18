@@ -43,6 +43,14 @@ return function()
     PORT = 4200,
     HEARTBEAT_INTERVAL = 60,
     OFFLINE_TIMEOUT = 150,
+    -- Wake-on-LAN: every node adopts this as its modem wake message and
+    -- periodically broadcasts it (WOL_INTERVAL +/- WOL_JITTER seconds), so a
+    -- powered-off node on the wired segment is started by any running peer.
+    -- The message must be the packet's first argument; it is installed on each
+    -- card at modem.setup, before that node can be shut down.
+    WOL_MESSAGE = "teleporter_wol",
+    WOL_INTERVAL = 60,
+    WOL_JITTER = 5,
     COOLDOWN_DURATION = 3,
     COUNTDOWN_DURATION = 5,
     -- TP_SYNC re-broadcast cadence (sender is the sole transmitter, so 4 Hz is
