@@ -79,6 +79,13 @@ return function()
     get_info = get_info,
     is_ready = is_ready,
     describe_not_ready = describe_not_ready,
+    status_text = function()
+      local info = get_info()
+      if is_ready(info) then
+        return info.kind .. ", " .. info.fuel_count .. " ender pearls"
+      end
+      return describe_not_ready(info)
+    end,
     has_component = function()
       return component.isAvailable("anchor")
     end,

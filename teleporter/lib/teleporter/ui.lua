@@ -158,7 +158,7 @@ return function(deps)
 
     local status_y = scr_h - 6
     gpu.setBackground(0x0A0A0A)
-    gpu.fill(1, status_y, scr_w, 3, " ")
+    gpu.fill(1, status_y - 1, scr_w, 4, " ")
 
     local info = spatial_io.get_info()
     local port_state, port_color
@@ -177,11 +177,11 @@ return function(deps)
     end
     gpu.setBackground(0x0A0A0A)
     gpu.setForeground(0x888888)
-    gpu.set(2, status_y, "Port:")
+    gpu.set(2, status_y - 1, "Port:")
     gpu.setForeground(port_color)
     local req_str = info.requiredEnergy >= 0 and string.format("%.2fM", info.requiredEnergy / 1000000) or "N/A"
-    gpu.set(8, status_y, string.format("%.2fM / %s AE", info.availableEnergy / 1000000, req_str))
-    gpu.set(scr_w - #port_state, status_y, port_state)
+    gpu.set(8, status_y - 1, string.format("%.2fM / %s AE", info.availableEnergy / 1000000, req_str))
+    gpu.set(scr_w - #port_state, status_y - 1, port_state)
 
     local live_count = 0
     local unhealthy_count = 0
@@ -200,7 +200,7 @@ return function(deps)
     if unhealthy_count > 0 then
       peers_line = peers_line .. string.format(" / %d unhealthy", unhealthy_count)
     end
-    gpu.set(2, status_y + 1, peers_line)
+    gpu.set(2, status_y, peers_line)
 
     local chamber_text, chamber_fg
     if is_holder then
@@ -215,16 +215,17 @@ return function(deps)
       chamber_fg = 0x888888
     end
     gpu.setForeground(chamber_fg)
-    gpu.set(scr_w - #chamber_text - 1, status_y + 1, chamber_text)
+    gpu.set(scr_w - #chamber_text - 1, status_y, chamber_text)
+
+    local loader_ready = anchor.is_ready()
+    gpu.setForeground(0x888888)
+    gpu.set(2, status_y + 1, "Loader:")
+    gpu.setForeground(loader_ready and 0x00FF00 or 0xFF4444)
+    gpu.set(10, status_y + 1, anchor.status_text())
 
     local state_text = "Ready"
-    local anchor_ready = anchor.is_ready()
-    local status_fg = 0x00FF00
     if #sorted == 0 then
       state_text = "Discovering..."
-    elseif not anchor_ready then
-      state_text = "Chunk loader: " .. anchor.describe_not_ready()
-      status_fg = 0xFF4444
     elseif is_holder and peers.get_selected() then
       local sel = peers.get(peers.get_selected())
       state_text = "Selected: " .. (sel and sel.name or "?")
@@ -233,7 +234,7 @@ return function(deps)
     elseif not is_holder then
       state_text = "Waiting for chamber to arrive"
     end
-    gpu.setForeground(status_fg)
+    gpu.setForeground(0x00FF00)
     gpu.set(2, status_y + 2, "Status: " .. state_text)
 
     local btn_y = scr_h - 2
@@ -244,7 +245,7 @@ return function(deps)
       btn_enabled = (
         spatial_io.can_trigger()
         and spatial_io.has_input_cell()
-        and anchor_ready
+        and loader_ready
         and peers.get_selected() ~= nil
         and peers.get(peers.get_selected())
         and peers.get(peers.get_selected()).online
@@ -252,7 +253,7 @@ return function(deps)
       btn_action = "request"
     elseif chamber_holder then
       btn_text = " CALL WARP "
-      btn_enabled = anchor_ready
+      btn_enabled = loader_ready
       btn_action = "summon"
     else
       btn_text = " CHAMBER IN TRANSIT "
