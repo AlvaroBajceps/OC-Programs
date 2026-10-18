@@ -123,3 +123,16 @@ me_interface at `TP_FIRE`; the receiver clears its stocking request only when
 Stage 2 completes (via `start_cooldown`). Any countdown/confirming state can
 transition to `COOLDOWN` via `TP_ABORT` / `TP_DONE` / hardware fault / power
 loss. See `protocol.lua` header comment for the full message sequence.
+
+### Energy gate
+
+Every readiness check requires both the driver's `canTrigger` and an explicit
+energy comparison (`spatial_io.is_energy_ok`: `availableEnergy >=
+requiredEnergy`, where `requiredEnergy` is the driver's nominal spatial cost
+corrected for GTNH's `PowerRatios.UsageMultiplier` (=10) with a 25% margin and
+a 1M AE floor). `canTrigger` cannot gate the receiver on its own: it requires a
+spatial cell in the input slot, which the receiver only gets after the sender
+fires. The receiver therefore reports its own energy sufficiency in `TP_PWR`
+(alongside `efficiency`), and the sender aborts with `DST_POWER` if the
+destination grid cannot afford the transition — so a warp is never committed
+toward an unpowered destination.

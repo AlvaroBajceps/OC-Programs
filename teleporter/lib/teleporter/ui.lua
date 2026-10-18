@@ -164,6 +164,9 @@ return function(deps)
     if info.efficiency == -1 then
       port_state = "FAULT"
       port_color = 0xFF4444
+    elseif not spatial_io.is_energy_ok(info) then
+      port_state = "LOW PWR"
+      port_color = 0xFFAA00
     elseif info.canTrigger then
       port_state = "RDY"
       port_color = 0x00FF00

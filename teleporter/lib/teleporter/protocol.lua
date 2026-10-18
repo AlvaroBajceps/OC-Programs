@@ -11,6 +11,13 @@
 -- sends TP_SUMMON to the chamber holder; the holder then initiates the
 -- normal TP_REQ handshake back to the summoner (who becomes the receiver).
 --
+-- Readiness is gated on both the driver's canTrigger and an explicit energy
+-- check (spatial_io.is_energy_ok = availableEnergy >= requiredEnergy). The
+-- receiver has no spatial cell during the countdown, so canTrigger is false
+-- there and cannot report energy status; the receiver therefore reports its own
+-- energy sufficiency over TP_PWR and the sender aborts with DST_POWER if the
+-- destination grid cannot afford the transition.
+--
 -- At countdown zero the sender calls spatial_io.trigger() (compacting the
 -- chamber into a spatial storage cell, ejected to the AE2 network toward the
 -- receiver), broadcasts TP_FIRE, and enters CONFIRMING. The receiver polls its
@@ -367,7 +374,7 @@ return function(deps)
   local function broadcast_tp_sync(seq, rem, total)
     local info = spatial_io.get_info()
     tp_src_power_val = info.availableEnergy
-    tp_src_power_ok = info.canTrigger and info.efficiency ~= -1
+    tp_src_power_ok = info.canTrigger and info.efficiency ~= -1 and spatial_io.is_energy_ok(info)
     tp_src_required = info.requiredEnergy
     modem.send({
       t = MT.TP_SYNC,
@@ -386,11 +393,12 @@ return function(deps)
     local info = spatial_io.get_info()
     tp_dest_power_val = info.availableEnergy
     -- During countdown the receiver has no cell yet (the sender has not
-    -- fired), so canTrigger is legitimately false. The readiness gate is
-    -- whether the chamber structure itself is valid (efficiency /= -1).
-    -- canTrigger becomes the authoritative gate only in CONFIRMING Stage 1
-    -- (check_receiver_confirm), after the cell arrives.
-    tp_dest_power_ok = info.efficiency ~= -1
+    -- fired), so canTrigger is legitimately false and cannot report energy
+    -- readiness. Gate instead on the chamber structure being valid and the
+    -- destination grid actually holding the energy (is_energy_ok); if it does
+    -- not, the sender aborts with DST_POWER before firing, so the chamber is
+    -- never committed to a warp the receiver cannot power.
+    tp_dest_power_ok = info.efficiency ~= -1 and spatial_io.is_energy_ok(info)
     tp_dest_required = info.requiredEnergy
     tp_dest_power_ts = computer.uptime()
     modem.send({
@@ -422,7 +430,7 @@ return function(deps)
       tp_stock_confirmed = false
       local info = spatial_io.get_info()
       tp_src_power_val = info.availableEnergy
-      tp_src_power_ok = info.canTrigger and info.efficiency ~= -1
+      tp_src_power_ok = info.canTrigger and info.efficiency ~= -1 and spatial_io.is_energy_ok(info)
       tp_src_required = info.requiredEnergy
       broadcast_tp_sync(seq, tp_countdown_remaining, config.COUNTDOWN_DURATION)
       reset_dest_hang(seq)
@@ -433,10 +441,15 @@ return function(deps)
       countdown_timer = event.timer(tick, function()
         local our_info = spatial_io.get_info()
         tp_src_power_val = our_info.availableEnergy
-        tp_src_power_ok = our_info.canTrigger and our_info.efficiency ~= -1
+        tp_src_power_ok = our_info.canTrigger and our_info.efficiency ~= -1 and spatial_io.is_energy_ok(our_info)
         tp_src_required = our_info.requiredEnergy
         if not tp_src_power_ok then
-          abort_teleport(OUTCOME.SRC_POWER, "Source spatial IO not ready (canTrigger false)", true, true)
+          abort_teleport(
+            OUTCOME.SRC_POWER,
+            "Source spatial IO not ready (invalid setup or insufficient energy)",
+            true,
+            true
+          )
           return
         end
         tp_countdown_remaining = tp_countdown_remaining - tick
@@ -687,7 +700,8 @@ return function(deps)
         tp_summon_mode = false
         tp_summon_target = nil
       end
-      start_countdown(src, config.MY_ADDR, msg.id, true, info.availableEnergy, info.requiredEnergy, false)
+      local dest_ok = info.efficiency ~= -1 and spatial_io.is_energy_ok(info)
+      start_countdown(src, config.MY_ADDR, msg.id, dest_ok, info.availableEnergy, info.requiredEnergy, false)
       return
     end
 
@@ -802,7 +816,12 @@ return function(deps)
       if APP_STATE == "COUNTDOWN_LOCAL" then
         reset_dest_hang(msg.id)
         if not tp_dest_power_ok then
-          abort_teleport(OUTCOME.DST_POWER, "Destination spatial IO setup invalid (efficiency == -1)", true, true)
+          abort_teleport(
+            OUTCOME.DST_POWER,
+            "Destination spatial IO not ready (invalid setup or insufficient energy)",
+            true,
+            true
+          )
         end
       end
       return
