@@ -1,0 +1,14 @@
+diff --git a/library/lib/computer.lua b/library/lib/computer.lua
+index 4dae27a..cf71d3e 100644
+--- a/library/lib/computer.lua
++++ b/library/lib/computer.lua
+@@ -111,4 +111,9 @@ end
+ function computer.getDeviceInfo()
+ end
+ 
++---Returns the computer's current architecture.
++---@return string
++function computer.getArchitecture()
++end
++
+ return computer

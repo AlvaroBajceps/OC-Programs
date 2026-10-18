@@ -1,0 +1,1 @@
+require("ab_fix_bit32")
