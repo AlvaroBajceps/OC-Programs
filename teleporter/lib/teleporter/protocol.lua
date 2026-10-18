@@ -520,22 +520,53 @@ return function(deps)
     return nil
   end
 
+  -- Cause of a failed source readiness gate, mirroring the three states the
+  -- IDLE UI shows (FAULT / LOW PWR / WAIT). Only used to build the reason
+  -- string relayed to a remote requester.
+  local function source_port_reason(info)
+    if info.efficiency == -1 then
+      return "invalid setup: no spatial chamber detected"
+    end
+    if not spatial_io.is_energy_ok(info) then
+      return "insufficient energy on the grid"
+    end
+    return "no spatial storage cell loaded"
+  end
+
+  -- Validate readiness and start the sender-side handshake. Returns true once
+  -- TP_REQ has been sent, or false plus an outcome code and human reason. A
+  -- caller answering a remote request (the TP_SUMMON handler) MUST relay a
+  -- failure over the wire: returning silently used to leave the summoner
+  -- waiting until its NO_RESPONSE timeout with no explanation for a chamber
+  -- holder that was merely short on power.
   local function request_teleport(dest_addr)
     if app.shutting_down then
-      return
+      return false, OUTCOME.REFUSED, "Teleporter is shutting down"
     end
-    if
-      APP_STATE ~= "IDLE"
-      or not redstone.is_red_high()
-      or not spatial_io.can_trigger()
-      or not spatial_io.has_input_cell()
-      or not anchor.is_ready()
-      or not peers.get(dest_addr)
-      or not peers.get(dest_addr).online
-      or dest_addr == config.MY_ADDR
-    then
-      return
+    if APP_STATE ~= "IDLE" or app.rename_mode then
+      return false, OUTCOME.REFUSED, "Chamber holder is busy with another warp"
     end
+    if dest_addr == config.MY_ADDR then
+      return false, OUTCOME.REFUSED, "Cannot warp to self"
+    end
+    if not redstone.is_red_high() then
+      return false, OUTCOME.REFUSED, "Chamber is not held by this node"
+    end
+    local anchor_info = anchor.get_info()
+    if not anchor.is_ready(anchor_info) then
+      return false,
+        OUTCOME.SRC_ANCHOR,
+        "Chamber holder chunk loader not ready (" .. anchor.describe_not_ready(anchor_info) .. ")"
+    end
+    local info = spatial_io.get_info()
+    if not spatial_io.can_trigger() then
+      return false, OUTCOME.SRC_POWER, "Chamber holder spatial IO not ready (" .. source_port_reason(info) .. ")"
+    end
+    local peer = peers.get(dest_addr)
+    if not peer or not peer.online then
+      return false, OUTCOME.NO_RESPONSE, "Destination is offline"
+    end
+
     local seq = next_seq()
     tp_active_seq = seq
     tp_active_src = config.MY_ADDR
@@ -544,8 +575,7 @@ return function(deps)
     APP_STATE = "REQUESTING"
     app.dirty = true
 
-    local peer = peers.get(dest_addr)
-    local modem_target = peer and peer.modem_addr or dest_addr
+    local modem_target = peer.modem_addr or dest_addr
     modem.send({ t = MT.TP_REQ, s = config.MY_ADDR, d = dest_addr, id = seq }, modem_target)
 
     if request_timeout_timer then
@@ -560,6 +590,7 @@ return function(deps)
         abort_teleport(OUTCOME.NO_RESPONSE, "Destination did not respond", true, true)
       end
     end, 1)
+    return true
   end
 
   local function summon_chamber()
@@ -780,7 +811,16 @@ return function(deps)
         }, remote_addr)
         return
       end
-      request_teleport(src)
+      local ok, outcome_code, why = request_teleport(src)
+      if not ok then
+        modem.send({
+          t = MT.TP_ABORT,
+          s = config.MY_ADDR,
+          id = msg.id,
+          oc = outcome_code,
+          why = why,
+        }, remote_addr)
+      end
       return
     end
 
