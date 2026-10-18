@@ -20,6 +20,10 @@
 --     component.spatial_io; provides energy/readiness telemetry (canTrigger,
 --     availableEnergy, requiredEnergy, hasInputCell) and the trigger() call
 --     that compacts (sender) or plays back (receiver) the warp chamber.
+--   * An Adapter touching a Railcraft World Anchor chunk loader, on every
+--     node. Exposed as component.anchor; must be type "world", hold >= 10
+--     ender pearls in its fuel slot, and not be redstone-disabled. The warp is
+--     gated on every participating node's chunk loader being ready.
 --   * An me_interface + database (upgrade) on every node: the receiver places
 --     a stocking request so the AE2 network routes the spatial storage cell
 --     (ejected by the sender's trigger) into its interface, feeding its
@@ -37,6 +41,7 @@ local config_factory = require("teleporter.config")
 local util_factory = require("teleporter.util")
 local ae2_factory = require("teleporter.ae2")
 local spatial_io_factory = require("teleporter.spatial_io")
+local anchor_factory = require("teleporter.anchor")
 local peers_factory = require("teleporter.peers")
 local redstone_factory = require("teleporter.redstone")
 local display_factory = require("teleporter.display")
@@ -56,6 +61,7 @@ local config = config_factory()
 local util = util_factory()
 local ae2 = ae2_factory({ config = config })
 local spatial_io = spatial_io_factory()
+local anchor = anchor_factory()
 local peers = peers_factory({ config = config, app = app })
 local redstone = redstone_factory({ config = config, peers = peers, app = app })
 local display = display_factory()
@@ -70,6 +76,7 @@ local protocol = protocol_factory({
   modem = modem,
   ae2 = ae2,
   spatial_io = spatial_io,
+  anchor = anchor,
   redstone = redstone,
   peers = peers,
   app = app,
@@ -79,6 +86,7 @@ local ui = ui_factory({
   display = display,
   peers = peers,
   spatial_io = spatial_io,
+  anchor = anchor,
   redstone = redstone,
   protocol = protocol,
   app = app,

@@ -44,6 +44,7 @@ return function(deps)
   local modem = deps.modem
   local ae2 = deps.ae2
   local spatial_io = deps.spatial_io
+  local anchor = deps.anchor
   local redstone = deps.redstone
   local peers = deps.peers
   local app = deps.app
@@ -79,6 +80,8 @@ return function(deps)
   local tp_summon_target = nil
   local tp_stock_confirmed = false
   local tp_stock_local = false
+  local tp_src_anchor_ok = false
+  local tp_dest_anchor_ok = false
 
   local countdown_timer = nil
   local cooldown_timer = nil
@@ -140,6 +143,8 @@ return function(deps)
     tp_summon_target = nil
     tp_stock_confirmed = false
     tp_stock_local = false
+    tp_src_anchor_ok = false
+    tp_dest_anchor_ok = false
   end
 
   local abort_teleport
@@ -386,6 +391,7 @@ return function(deps)
       sp = info.availableEnergy,
       sok = tp_src_power_ok,
       sreq = info.requiredEnergy,
+      sa = tp_src_anchor_ok,
     })
   end
 
@@ -401,6 +407,8 @@ return function(deps)
     tp_dest_power_ok = info.efficiency ~= -1 and spatial_io.is_energy_ok(info)
     tp_dest_required = info.requiredEnergy
     tp_dest_power_ts = computer.uptime()
+    local anchor_info = anchor.get_info()
+    tp_dest_anchor_ok = anchor.is_ready(anchor_info)
     modem.send({
       t = MT.TP_PWR,
       s = config.MY_ADDR,
@@ -408,6 +416,7 @@ return function(deps)
       pwr = info.availableEnergy,
       ok = tp_dest_power_ok,
       req = info.requiredEnergy,
+      ak = tp_dest_anchor_ok,
     })
   end
 
@@ -432,6 +441,8 @@ return function(deps)
       tp_src_power_val = info.availableEnergy
       tp_src_power_ok = info.canTrigger and info.efficiency ~= -1 and spatial_io.is_energy_ok(info)
       tp_src_required = info.requiredEnergy
+      tp_src_anchor_ok = anchor.is_ready()
+      tp_dest_anchor_ok = true
       broadcast_tp_sync(seq, tp_countdown_remaining, config.COUNTDOWN_DURATION)
       reset_dest_hang(seq)
       if countdown_timer then
@@ -447,6 +458,17 @@ return function(deps)
           abort_teleport(
             OUTCOME.SRC_POWER,
             "Source spatial IO not ready (invalid setup or insufficient energy)",
+            true,
+            true
+          )
+          return
+        end
+        local anchor_info = anchor.get_info()
+        tp_src_anchor_ok = anchor.is_ready(anchor_info)
+        if not tp_src_anchor_ok then
+          abort_teleport(
+            OUTCOME.SRC_ANCHOR,
+            "Source chunk loader not ready (" .. anchor.describe_not_ready(anchor_info) .. ")",
             true,
             true
           )
@@ -475,6 +497,7 @@ return function(deps)
       tp_src_power_val = 0
       tp_src_power_ok = false
       tp_src_required = -1
+      tp_src_anchor_ok = false
       reset_sync_hang(seq)
       tp_stock_local = false
       if ae2.request_stock_item() then
@@ -506,6 +529,7 @@ return function(deps)
       or not redstone.is_red_high()
       or not spatial_io.can_trigger()
       or not spatial_io.has_input_cell()
+      or not anchor.is_ready()
       or not peers.get(dest_addr)
       or not peers.get(dest_addr).online
       or dest_addr == config.MY_ADDR
@@ -682,6 +706,24 @@ return function(deps)
         end
         return
       end
+      local anchor_info = anchor.get_info()
+      if not anchor.is_ready(anchor_info) then
+        local why = "Destination chunk loader not ready (" .. anchor.describe_not_ready(anchor_info) .. ")"
+        modem.send({
+          t = MT.TP_ACK,
+          s = config.MY_ADDR,
+          d = src,
+          id = msg.id,
+          ok = false,
+          pwr = 0,
+          oc = OUTCOME.DST_ANCHOR,
+          why = why,
+        }, remote_addr)
+        if is_summon_response then
+          abort_teleport(OUTCOME.DST_ANCHOR, why, false, true)
+        end
+        return
+      end
       local info = spatial_io.get_info()
       modem.send({
         t = MT.TP_ACK,
@@ -727,6 +769,17 @@ return function(deps)
         }, remote_addr)
         return
       end
+      local anchor_info = anchor.get_info()
+      if not anchor.is_ready(anchor_info) then
+        modem.send({
+          t = MT.TP_ABORT,
+          s = config.MY_ADDR,
+          id = msg.id,
+          oc = OUTCOME.SRC_ANCHOR,
+          why = "Chamber holder chunk loader not ready (" .. anchor.describe_not_ready(anchor_info) .. ")",
+        }, remote_addr)
+        return
+      end
       request_teleport(src)
       return
     end
@@ -755,6 +808,7 @@ return function(deps)
         tp_src_power_val = msg.sp or 0
         tp_src_power_ok = msg.sok == true
         tp_src_required = msg.sreq or -1
+        tp_src_anchor_ok = msg.sa == true
         tp_dest_power_ok = false
         tp_dest_power_val = 0
         tp_dest_power_ts = 0
@@ -766,6 +820,7 @@ return function(deps)
         tp_src_power_val = msg.sp or tp_src_power_val
         tp_src_power_ok = msg.sok == true
         tp_src_required = msg.sreq or -1
+        tp_src_anchor_ok = msg.sa == true
         app.dirty = true
         if is_dest then
           if not tp_stock_local then
@@ -811,6 +866,7 @@ return function(deps)
       tp_dest_power_val = msg.pwr or 0
       tp_dest_power_ok = msg.ok == true
       tp_dest_required = msg.req or -1
+      tp_dest_anchor_ok = msg.ak ~= false
       tp_dest_power_ts = computer.uptime()
       app.dirty = true
       if APP_STATE == "COUNTDOWN_LOCAL" then
@@ -819,6 +875,13 @@ return function(deps)
           abort_teleport(
             OUTCOME.DST_POWER,
             "Destination spatial IO not ready (invalid setup or insufficient energy)",
+            true,
+            true
+          )
+        elseif not tp_dest_anchor_ok then
+          abort_teleport(
+            OUTCOME.DST_ANCHOR,
+            "Destination chunk loader not ready (missing, disabled, or low fuel)",
             true,
             true
           )
@@ -980,6 +1043,8 @@ return function(deps)
       tp_summon_target = tp_summon_target,
       tp_stock_confirmed = tp_stock_confirmed,
       tp_stock_local = tp_stock_local,
+      tp_src_anchor_ok = tp_src_anchor_ok,
+      tp_dest_anchor_ok = tp_dest_anchor_ok,
       has_chamber = redstone.is_red_high(),
       chamber_holder = find_chamber_holder(),
     }

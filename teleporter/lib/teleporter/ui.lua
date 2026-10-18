@@ -11,6 +11,7 @@ return function(deps)
   local display = deps.display
   local peers = deps.peers
   local spatial_io = deps.spatial_io
+  local anchor = deps.anchor
   local redstone = deps.redstone
   local protocol = deps.protocol
   local app = deps.app
@@ -217,8 +218,13 @@ return function(deps)
     gpu.set(scr_w - #chamber_text - 1, status_y + 1, chamber_text)
 
     local state_text = "Ready"
+    local anchor_ready = anchor.is_ready()
+    local status_fg = 0x00FF00
     if #sorted == 0 then
       state_text = "Discovering..."
+    elseif not anchor_ready then
+      state_text = "Chunk loader: " .. anchor.describe_not_ready()
+      status_fg = 0xFF4444
     elseif is_holder and peers.get_selected() then
       local sel = peers.get(peers.get_selected())
       state_text = "Selected: " .. (sel and sel.name or "?")
@@ -227,7 +233,7 @@ return function(deps)
     elseif not is_holder then
       state_text = "Waiting for chamber to arrive"
     end
-    gpu.setForeground(0x00FF00)
+    gpu.setForeground(status_fg)
     gpu.set(2, status_y + 2, "Status: " .. state_text)
 
     local btn_y = scr_h - 2
@@ -238,6 +244,7 @@ return function(deps)
       btn_enabled = (
         spatial_io.can_trigger()
         and spatial_io.has_input_cell()
+        and anchor_ready
         and peers.get_selected() ~= nil
         and peers.get(peers.get_selected())
         and peers.get(peers.get_selected()).online
@@ -245,7 +252,7 @@ return function(deps)
       btn_action = "request"
     elseif chamber_holder then
       btn_text = " CALL WARP "
-      btn_enabled = true
+      btn_enabled = anchor_ready
       btn_action = "summon"
     else
       btn_text = " CHAMBER IN TRANSIT "
@@ -478,6 +485,19 @@ return function(deps)
         display.draw_text_centered(1, 15, scr_w, "Local Stock: \226\133\166 Placing", 0xFFAA00, bg_color)
       end
     end
+
+    local loaders_ok = st.tp_src_anchor_ok and st.tp_dest_anchor_ok
+    display.draw_text_centered(
+      1,
+      16,
+      scr_w,
+      "Loaders: SRC "
+        .. (st.tp_src_anchor_ok and "\226\156\148" or "\226\156\150")
+        .. "  DEST "
+        .. (st.tp_dest_anchor_ok and "\226\156\148" or "\226\156\150"),
+      loaders_ok and 0x00FF00 or 0xFFAA00,
+      bg_color
+    )
 
     local cancel_y = scr_h - 3
     local cancel_w = 20

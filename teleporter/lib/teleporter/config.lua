@@ -74,6 +74,8 @@ return function()
       NO_RESPONSE = "noresp",
       SRC_POWER = "srcpwr",
       DST_POWER = "dstpwr",
+      SRC_ANCHOR = "srcanch",
+      DST_ANCHOR = "dstanh",
       LOST_SYNC = "lostsync",
       DEST_UNREACHABLE = "destgone",
       NETWORK_CANCEL = "netcancel",

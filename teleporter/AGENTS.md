@@ -136,3 +136,23 @@ fires. The receiver therefore reports its own energy sufficiency in `TP_PWR`
 (alongside `efficiency`), and the sender aborts with `DST_POWER` if the
 destination grid cannot afford the transition — so a warp is never committed
 toward an unpowered destination.
+
+### Chunk-loader gate
+
+Every node must also keep a Railcraft World Anchor (chunk loader) reachable via
+`component.anchor`, or the warp is refused. The anchor is ready when all three
+hold: `getType() == "world"`, its fuel slot holds at least 10
+`minecraft:ender_pearl`, and it is not redstone-disabled (`isDisabled() ==
+false`). A missing component or a driver error fails closed (`get_info` returns
+`present = false`), so an unready loader can never satisfy the gate.
+
+This mirrors the energy gate. The sender guards `request_teleport` on
+`anchor.is_ready()` and re-checks each countdown tick, aborting with
+`SRC_ANCHOR`. The receiver reports its loader state in `TP_PWR` (`ak`), and the
+sender aborts with `DST_ANCHOR` when it is false; the receiver also refuses a
+`TP_REQ` outright with a `DST_ANCHOR` `TP_ACK` before the handshake proceeds,
+and the chamber holder rejects a `TP_SUMMON` with `SRC_ANCHOR`. The sender
+advertises its own loader state over `TP_SYNC` (`sa`), which is display-only —
+a bystander never aborts on it. `ak` is parsed nil-tolerantly (`msg.ak ~=
+false`) so an older peer that omits the field is not blocked. Like the energy
+gate this is a soft readiness check, not part of `check_health()`.
