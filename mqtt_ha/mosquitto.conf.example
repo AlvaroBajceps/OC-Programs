@@ -1,0 +1,11 @@
+# Authenticated Mosquitto profile for the GTNH MQTT/HA test.
+# Mount at /mosquitto/config/mosquitto.conf and create the password file with
+# mosquitto_passwd. Keep this listener on the private Docker network only.
+
+listener 1883 0.0.0.0
+allow_anonymous false
+password_file /mosquitto/config/passwd
+
+persistence true
+persistence_location /mosquitto/data/
+log_dest stdout
