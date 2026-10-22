@@ -35,7 +35,7 @@ M.CONFIG = {
   state_file = "/etc/mqtt_ha.state",
   restart_mode = "keep_state",
   device_name = "GTNH Industrial Panel",
-  version = "2.2.0",
+  version = "2.2.1",
 }
 
 M.MQTT_COMMIT = "14ad9be4c327972be68726d3c796c781eb4cc542"
@@ -275,7 +275,12 @@ function M.process_identity(info)
   if info.command == "lua" then
     return nil
   end
-  return tostring(info.command or info.path or "")
+  local command = info.command
+  local path = info.path
+  if command == nil and path == nil then
+    return nil
+  end
+  return tostring(command or "") .. "\0" .. tostring(path or "")
 end
 
 ---@param process table|nil
