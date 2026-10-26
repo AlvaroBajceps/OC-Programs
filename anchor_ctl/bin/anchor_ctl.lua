@@ -5,6 +5,39 @@
 local M = {}
 
 M.VERSION = "1.0.0"
+M.CONFIG_OVERRIDE = "/etc/anchor_ctl.config.lua"
+
+---@param deps table|nil
+---@return table|nil overrides
+---@return string|nil err
+function M.load_config_overrides(deps)
+  deps = deps or {}
+  local path = deps.path or M.CONFIG_OVERRIDE
+  local filesystem = deps.filesystem
+  if not filesystem then
+    local ok, loaded = pcall(require, "filesystem")
+    if not ok then
+      return nil, nil
+    end
+    filesystem = loaded
+  end
+  local exists_ok, exists = pcall(filesystem.exists, path)
+  if not exists_ok or not exists then
+    return nil, nil
+  end
+  local chunk, load_err = (deps.loadfile or loadfile)(path)
+  if not chunk then
+    return nil, "cannot load " .. path .. ": " .. tostring(load_err)
+  end
+  local ok, value = pcall(chunk)
+  if not ok then
+    return nil, "error in " .. path .. ": " .. tostring(value)
+  end
+  if type(value) ~= "table" then
+    return nil, path .. " must return a table"
+  end
+  return value, nil
+end
 
 ---@param info table|nil
 ---@return string|nil
@@ -128,12 +161,24 @@ function M.main(deps)
     return
   end
 
-  local cfg = require("anchor_ctl.config")(computer, deps.config)
+  local overrides = deps.config
+  local override_err = nil
+  if overrides == nil then
+    overrides, override_err = M.load_config_overrides({
+      filesystem = deps.filesystem,
+      loadfile = deps.loadfile,
+    })
+  end
+
+  local cfg = require("anchor_ctl.config")(computer, overrides)
 
   local log = deps.log
   if not log then
     local filesystem = deps.filesystem or require("filesystem")
     log = make_logger(cfg, io, os_mod, filesystem)
+  end
+  if override_err then
+    log("error", override_err)
   end
 
   local state = require("anchor_ctl.state")({ io = deps.io, os = deps.os })

@@ -94,8 +94,8 @@ Edit the `DEPLOYMENT` block and the broker/wiring constants at the top of
 `lib/anchor_ctl/config.lua`:
 
 - Source tree: `src/OC-Programs/anchor_ctl/lib/anchor_ctl/config.lua`
-- Installed computer: `/lib/anchor_ctl/config.lua` (edit it there after install,
-  or edit the source before `oppm install`)
+- Installed computer: `/lib/anchor_ctl/config.lua` (overwritten by
+  `oppm update` — for machine-specific values use the override file below)
 
 ```lua
 local DEPLOYMENT = {
@@ -113,6 +113,36 @@ Also confirm:
   on the network.
 - `DRAWER_SLOT` when the drawer has a single slot but the pearls are not in
   slot 1.
+
+### Per-machine overrides that survive `oppm update`
+
+`lib/anchor_ctl/config.lua` is shipped by the package, so `oppm update` replaces
+it. Put machine-specific values in `/etc/anchor_ctl.config.lua` instead. The
+daemon loads that file at startup, merges its keys over the packaged defaults,
+and never overwrites it. `DEPLOYMENT` is merged field by field, and the
+`deployment_name` plus the Home Assistant device name follow the effective
+dimension.
+
+```lua
+-- /etc/anchor_ctl.config.lua
+return {
+  DEPLOYMENT = {
+    DIMENSION_ID = -1,
+    DIMENSION_NAME = "Nether",
+    CHUNKS_CHUNKLOADED = 0,
+  },
+  -- Any top-level cfg key can be overridden, for example:
+  -- BROKER_HOST = "172.16.69.4",
+  -- REDSTONE_SIDE = 0,
+  -- ANCHOR_ADDRESS = "aaaa-bbbb-cccc-dddd",
+}
+```
+
+A missing file is ignored. A file that cannot be loaded, raises, or does not
+return a table is logged to `/etc/anchor_ctl.log` and the daemon continues with
+the packaged defaults. Restart the daemon (or reboot) after editing.
+`/etc/anchor_ctl.state` holds the runtime boot mode and is not a config
+override.
 
 Install from the `OC-Programs` OPPM repository:
 

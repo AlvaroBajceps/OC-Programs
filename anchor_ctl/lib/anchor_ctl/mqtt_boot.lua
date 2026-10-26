@@ -112,7 +112,7 @@ function M.ensure_luamqtt(cfg, deps)
   end
 
   if not filesystem.exists(cfg.MQTT_DIR) then
-    local made, mkdir_err = filesystem.mkdir(cfg.MQTT_DIR)
+    local made, mkdir_err = filesystem.makeDirectory(cfg.MQTT_DIR)
     if not made and not filesystem.exists(cfg.MQTT_DIR) then
       return nil, "cannot create " .. cfg.MQTT_DIR .. ": " .. tostring(mkdir_err)
     end

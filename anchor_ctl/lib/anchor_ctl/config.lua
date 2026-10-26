@@ -58,7 +58,6 @@ local function build(computer, overrides)
   cfg.base_topic = "gtnh/anchor/" .. cfg.node
   local base = cfg.base_topic
 
-  cfg.deployment_name = DEPLOYMENT.DIMENSION_NAME
   cfg.discovery_prefix = DISCOVERY_PREFIX
   cfg.availability = base .. "/availability"
   cfg.link_state = base .. "/link/state"
@@ -74,18 +73,6 @@ local function build(computer, overrides)
   cfg.problem_attributes = base .. "/problem/attributes"
   cfg.deployment_state = base .. "/deployment/state"
   cfg.deployment_attributes = base .. "/deployment/attributes"
-
-  cfg.device = {
-    identifiers = { cfg.node },
-    name = DEVICE_NAME .. " " .. DEPLOYMENT.DIMENSION_NAME,
-    manufacturer = "OpenComputers / GTNH",
-    model = "World Anchor Controller",
-    sw_version = VERSION,
-  }
-  cfg.origin = {
-    name = "oc_gtnh anchor_ctl",
-    sw_version = VERSION,
-  }
 
   cfg.DEPLOYMENT = DEPLOYMENT
   cfg.BROKER_HOST = BROKER_HOST
@@ -125,12 +112,53 @@ local function build(computer, overrides)
     cfg[key] = value
   end
 
-  -- deployment_name is derived after overrides so it can be overridden directly.
-  if overrides.deployment_name == nil then
-    local dep = cfg.DEPLOYMENT
-    if type(dep) == "table" and type(dep.DIMENSION_NAME) == "string" then
-      cfg.deployment_name = dep.DIMENSION_NAME
+  -- Merge rather than replace so an override may change one constant only.
+  local deployment = {}
+  for key, value in pairs(DEPLOYMENT) do
+    deployment[key] = value
+  end
+  if type(overrides.DEPLOYMENT) == "table" then
+    for key, value in pairs(overrides.DEPLOYMENT) do
+      deployment[key] = value
     end
+  end
+  cfg.DEPLOYMENT = deployment
+
+  -- Derived fields must reflect the effective deployment, so build them last.
+  if overrides.deployment_name == nil then
+    cfg.deployment_name = tostring(cfg.DEPLOYMENT.DIMENSION_NAME)
+  end
+
+  if overrides.device == nil then
+    cfg.device = {
+      identifiers = { cfg.node },
+      name = cfg.DEVICE_NAME .. " " .. cfg.deployment_name,
+      manufacturer = "OpenComputers / GTNH",
+      model = "World Anchor Controller",
+      sw_version = cfg.VERSION,
+    }
+  end
+  if overrides.origin == nil then
+    cfg.origin = {
+      name = "oc_gtnh anchor_ctl",
+      sw_version = cfg.VERSION,
+    }
+  end
+
+  if overrides.broker == nil then
+    cfg.broker = cfg.BROKER_HOST
+  end
+  if overrides.port == nil then
+    cfg.port = cfg.BROKER_PORT
+  end
+  if overrides.username == nil then
+    cfg.username = cfg.USERNAME
+  end
+  if overrides.password == nil then
+    cfg.password = cfg.PASSWORD
+  end
+  if overrides.client_id == nil then
+    cfg.client_id = cfg.node
   end
 
   return cfg
