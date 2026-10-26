@@ -1478,7 +1478,7 @@ function M.ensure_luamqtt(cfg, deps)
   local filesystem = deps.filesystem or require("filesystem")
   local directory = cfg.mqtt_dir
   if not filesystem.exists(directory) then
-    local made, mkdir_err = filesystem.mkdir(directory)
+    local made, mkdir_err = filesystem.makeDirectory(directory)
     if not made and not filesystem.exists(directory) then
       error("cannot create " .. directory .. ": " .. tostring(mkdir_err))
     end
