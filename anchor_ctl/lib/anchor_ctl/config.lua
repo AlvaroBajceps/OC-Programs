@@ -24,8 +24,12 @@ local STATE_FILE = "/etc/anchor_ctl.state"
 local LOG_FILE = "/etc/anchor_ctl.log"
 local LOG_MAX_BYTES = 65536
 
--- Redstone wiring: side 0 = bottom; LOW (0) = chunkloading ON, HIGH (15) = disabled.
-local REDSTONE_SIDE = 0
+-- Redstone wiring: sides are 0 = bottom, 1 = top. LOW (0) = chunkloading ON,
+-- HIGH (15) = disabled.
+local REDSTONE_SIDES = { 0, 1 }
+-- nil prefers an external component (Redstone I/O block, slot -1) over the
+-- in-case card; set an address to pin one when several are connected.
+local REDSTONE_ADDRESS = nil
 local ENABLED_LEVEL = 0
 local DISABLED_LEVEL = 15
 
@@ -42,7 +46,7 @@ local PEARL_ITEM_NAMES = {
 }
 
 local DEVICE_NAME = "Chunk Anchor"
-local VERSION = "1.0.0"
+local VERSION = "1.1.0"
 
 ---@param computer table
 ---@param overrides table|nil
@@ -90,7 +94,8 @@ local function build(computer, overrides)
   cfg.STATE_FILE = STATE_FILE
   cfg.LOG_FILE = LOG_FILE
   cfg.LOG_MAX_BYTES = LOG_MAX_BYTES
-  cfg.REDSTONE_SIDE = REDSTONE_SIDE
+  cfg.REDSTONE_SIDES = REDSTONE_SIDES
+  cfg.REDSTONE_ADDRESS = REDSTONE_ADDRESS
   cfg.ENABLED_LEVEL = ENABLED_LEVEL
   cfg.DISABLED_LEVEL = DISABLED_LEVEL
   cfg.BOOT_MODE = BOOT_MODE
@@ -110,6 +115,16 @@ local function build(computer, overrides)
 
   for key, value in pairs(overrides) do
     cfg[key] = value
+  end
+
+  if overrides.REDSTONE_SIDES == nil and overrides.REDSTONE_SIDE ~= nil then
+    cfg.REDSTONE_SIDES = { overrides.REDSTONE_SIDE }
+  end
+  if type(cfg.REDSTONE_SIDES) == "number" then
+    cfg.REDSTONE_SIDES = { cfg.REDSTONE_SIDES }
+  end
+  if type(cfg.REDSTONE_SIDES) ~= "table" or #cfg.REDSTONE_SIDES == 0 then
+    cfg.REDSTONE_SIDES = { 0 }
   end
 
   -- Merge rather than replace so an override may change one constant only.

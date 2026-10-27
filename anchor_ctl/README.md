@@ -5,13 +5,17 @@ loader) and reports a Computronics **drawer** (ender pearl buffer) to Home
 Assistant over MQTT. All control is HA-only; the computer needs no screen,
 keyboard, or GPU at runtime.
 
-- Switch **Chunkloading** — toggles the anchor by driving the computer's
-  bottom redstone side into a redstone conduit.
+- Switch **Chunkloading** — toggles the anchor by driving the top and bottom
+  sides of an external redstone component into a redstone conduit.
 - Select **Boot Mode** — `on`, `off`, or `keep_state` policy for the next boot.
 - Sensors for anchor status, fuel, drawer pearls, deployment metadata, broker
   link, and a problem flag with reasons.
 
 Package: `anchor_ctl` in the `OC-Programs` OPPM repository.
+
+> The OpenComputers **Adapter** block has no redstone component and cannot emit
+> redstone. Use a **Redstone I/O** block as the external emitter; the Adapter is
+> only for the anchor and drawer components.
 
 ## Why a microcontroller is not feasible
 
@@ -42,7 +46,8 @@ Use a full computer.
 | HDD Tier 2 | 1 | 2 MB; OpenOS is ~0.4 MB raw and luamqtt ~164 KB, so this leaves comfortable headroom |
 | EEPROM (Lua BIOS) | 1 | Standard Lua BIOS |
 | Internet Card | 1 | One item, driver tier 2; must go in the **Tier-2** card slot |
-| Redstone Card (Tier 1) | 1 | The plain Redstone Card; goes in the **Tier-1** card slot |
+| Redstone I/O block | 1 | External emitter; place it by the anchor and connect it to the computer with cable. Drives the conduit from its top and bottom sides. |
+| Redstone Card (Tier 1) | optional | Only as an in-case fallback when no Redstone I/O block is connected |
 | Adapter + OC cable | 1 + cable | Adapter must touch both the World Anchor and the drawer |
 | Power | — | Any OC-compatible power source |
 
@@ -55,27 +60,36 @@ the HDD into the headless case.
 ## Wiring
 
 ```
-computer bottom face
+Redstone I/O block  (top side = 1, bottom side = 0)
       |
 redstone conduit / redstone dust run
       |
 all World Anchors in the chunkloading group
 ```
 
+- The Redstone I/O block must be connected to the computer (adjacent or by
+  cable); the daemon prefers its external `redstone` component over the
+  in-case card.
+- `REDSTONE_SIDES = { 0, 1 }` drives **bottom and top** together. Sides on a
+  Redstone I/O block are absolute; on a Redstone Card they are relative to the
+  computer.
+- `REDSTONE_ADDRESS` pins a specific redstone component when more than one is
+  connected. With no address, an external component (slot `-1`) wins.
 - `ENABLED_LEVEL = 0` (LOW) means **chunkloading ON**.
 - `DISABLED_LEVEL = 15` (HIGH) means **chunkloading disabled**.
 
-**Fail-safe warning.** A removed or broken computer lets the conduit default to
-signal 0, which means chunkloading **ON**. If that failure mode is
-unacceptable, set `ENABLED_LEVEL` / `DISABLED_LEVEL` in the config to invert the
-polarity and rebuild the wiring accordingly.
+**Fail-safe warning.** If the redstone component is removed or broken, the
+conduit defaults to signal 0, which means chunkloading **ON**. If that failure
+mode is unacceptable, set `ENABLED_LEVEL` / `DISABLED_LEVEL` in the config to
+invert the polarity and rebuild the wiring accordingly. Removing only the
+computer leaves a Redstone I/O block's last output in place, because OC persists
+redstone output in the block NBT.
 
-OpenComputers persists redstone output in the computer NBT
-(`RedstoneAware.rs.output`) across reboots, so the daemon's boot sequence reads
-the real anchor at startup instead of trusting the saved output. If the
-**computer** is broken or replaced, that persisted output resets to 0, and the
-daemon reconciles from the anchor's actual `isDisabled()` state on the next
-poll.
+OpenComputers persists redstone output in the emitting block's NBT, so the
+daemon's boot sequence reads the real anchor at startup instead of trusting the
+saved output. If the **emitter** is broken or replaced, that persisted output
+resets to 0, and the daemon reconciles from the anchor's actual `isDisabled()`
+state on the next poll.
 
 ## Component facts
 
@@ -87,6 +101,9 @@ poll.
 - `slot = -1` on a component object is the adapter base-component slot, not an
   aggregate sentinel. Do not read `-1` to total a multi-slot drawer; sum slots
   `1..getDrawerCount()`.
+- `component.slot(address)` is `-1` for components outside the computer case
+  (Redstone I/O block, adapter-provided components). The daemon uses that to
+  prefer the external redstone emitter over the in-case card.
 
 ## Deployment configuration
 
@@ -108,7 +125,9 @@ local DEPLOYMENT = {
 Also confirm:
 
 - `BROKER_HOST` / `BROKER_PORT` (default `172.16.69.4:1883`).
-- `ENABLED_LEVEL` / `DISABLED_LEVEL` and `REDSTONE_SIDE` (default bottom = 0).
+- `ENABLED_LEVEL` / `DISABLED_LEVEL` and `REDSTONE_SIDES` (default `{ 0, 1 }` =
+  bottom and top). `REDSTONE_ADDRESS` pins the emitter; `REDSTONE_SIDE` is still
+  accepted as a single-side legacy override.
 - `ANCHOR_ADDRESS` / `DRAWER_ADDRESS` when more than one of either component is
   on the network.
 - `DRAWER_SLOT` when the drawer has a single slot but the pearls are not in
@@ -133,7 +152,8 @@ return {
   },
   -- Any top-level cfg key can be overridden, for example:
   -- BROKER_HOST = "172.16.69.4",
-  -- REDSTONE_SIDE = 0,
+  -- REDSTONE_SIDES = { 0, 1 },
+  -- REDSTONE_ADDRESS = "aaaa-bbbb-cccc-dddd",
   -- ANCHOR_ADDRESS = "aaaa-bbbb-cccc-dddd",
 }
 ```
@@ -167,7 +187,7 @@ before the daemon owns the redstone side.
 | Boot Mode | select | `boot_mode/state` | `on` / `off` / `keep_state`, `entity_category: config` |
 | Broker Link | binary_sensor | `link/state` | `ONLINE` / `OFFLINE`, connectivity diagnostic |
 | Problem | binary_sensor | `problem/state` | Attributes list each reason |
-| Deployment | sensor | `deployment/state` | State is the dimension name; attributes carry dimension id and chunk count |
+| Deployment | sensor | `deployment/state` | State is the dimension name; attributes carry dimension id, chunk count, redstone sides and redstone address |
 | Anchor Fuel | sensor | `anchor_fuel/state` | Pearls left in the anchor's fuel slot |
 
 Unknown numeric or boolean values publish the literal `"unknown"`, never a
@@ -190,8 +210,11 @@ guessed value.
   count.
 - **Redstone mismatch.** `anchor did not follow redstone` appears when the
   anchor's actual state disagrees with the written redstone level for longer
-  than `MISMATCH_TIMEOUT`. Check the conduit, the bottom side, and the anchor's
-  redstone mode.
+  than `MISMATCH_TIMEOUT`. Check the conduit, both configured sides on the
+  Redstone I/O block, and the anchor's redstone mode.
+- **Output still comes from the computer case.** No external redstone component
+  was found, so the daemon fell back to the in-case card. Connect a Redstone I/O
+  block (or set `REDSTONE_ADDRESS`). A plain Adapter cannot emit redstone.
 - **State file or log.** Persisted boot mode lives in `/etc/anchor_ctl.state`;
   the append-only log is `/etc/anchor_ctl.log`. It is truncated at startup and
   re-checked every 64 writes, so a long broker outage cannot fill the HDD.

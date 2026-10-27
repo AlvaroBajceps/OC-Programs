@@ -4,7 +4,7 @@
 
 local M = {}
 
-M.VERSION = "1.0.0"
+M.VERSION = "1.1.0"
 M.CONFIG_OVERRIDE = "/etc/anchor_ctl.config.lua"
 
 ---@param deps table|nil

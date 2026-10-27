@@ -57,6 +57,8 @@ local DEPLOYMENT_FIELDS = {
   "anchor_address",
   "drawer_address",
   "redstone_side",
+  "redstone_sides",
+  "redstone_address",
   "enabled_level",
   "disabled_level",
 }
@@ -180,7 +182,7 @@ return function(deps)
     end
 
     if not redstone_available then
-      add_reason(reasons, seen, "redstone card missing")
+      add_reason(reasons, seen, "redstone component missing")
     end
     if redstone_write_failed then
       add_reason(reasons, seen, "redstone write failed")
@@ -214,7 +216,9 @@ return function(deps)
       chunks_chunkloaded = cfg.DEPLOYMENT.CHUNKS_CHUNKLOADED,
       anchor_address = ai.address or cfg.ANCHOR_ADDRESS,
       drawer_address = di.address or cfg.DRAWER_ADDRESS,
-      redstone_side = cfg.REDSTONE_SIDE,
+      redstone_side = cfg.REDSTONE_SIDES[1],
+      redstone_sides = cfg.REDSTONE_SIDES,
+      redstone_address = cfg.REDSTONE_ADDRESS,
       enabled_level = cfg.ENABLED_LEVEL,
       disabled_level = cfg.DISABLED_LEVEL,
     }
@@ -394,7 +398,7 @@ return function(deps)
     if name == "chunkloading" then
       if not redstone.available or not redstone.available() then
         redstone_available = false
-        return false, "redstone card missing"
+        return false, "redstone component missing"
       end
       redstone_available = true
 
