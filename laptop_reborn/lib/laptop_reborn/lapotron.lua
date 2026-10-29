@@ -12,9 +12,22 @@ local CAPACITY_METHODS = { "getEUCapacity", "getEUMaxStored", "getEUCapacityStri
 local INPUT_METHODS = { "getAverageElectricInput", "getEUInputAverage" }
 local OUTPUT_METHODS = { "getAverageElectricOutput", "getEUOutputAverage" }
 
+local function method(proxy, name)
+  if type(proxy) ~= "table" then
+    return nil
+  end
+  local ok, fn = pcall(function()
+    return proxy[name]
+  end)
+  if ok and type(fn) == "function" then
+    return fn
+  end
+  return nil
+end
+
 local function call(proxy, name)
-  local fn = proxy and proxy[name]
-  if type(fn) ~= "function" then
+  local fn = method(proxy, name)
+  if fn == nil then
     return nil
   end
   local ok, value = pcall(fn, proxy)
@@ -30,7 +43,19 @@ local function as_number(value)
   end
   if type(value) == "string" then
     local cleaned = value:gsub("[,%s]", "")
+    local mantissa, exponent = cleaned:match("([%d%.]+)[xX]10%^(%-?%d+)")
+    if mantissa ~= nil and exponent ~= nil then
+      local parsed = tonumber(mantissa) * (10 ^ tonumber(exponent))
+      if parsed == parsed then
+        return parsed
+      end
+    end
     local parsed = tonumber(cleaned)
+    if parsed ~= nil and parsed == parsed then
+      return parsed
+    end
+    local numeric = cleaned:match("[-+]?%d+%.?%d*[eE]?[-+]?%d*") or cleaned:match("[-+]?%.%d+[eE]?[-+]?%d*")
+    parsed = tonumber(numeric)
     if parsed ~= nil and parsed == parsed then
       return parsed
     end
@@ -48,9 +73,20 @@ local function first_number(proxy, names)
   return nil
 end
 
+local function best_number(proxy, names)
+  local best
+  for _, name in ipairs(names) do
+    local value = as_number(call(proxy, name))
+    if value ~= nil and (best == nil or value > best) then
+      best = value
+    end
+  end
+  return best
+end
+
 local function has_any(proxy, names)
   for _, name in ipairs(names) do
-    if type(proxy and proxy[name]) == "function" then
+    if method(proxy, name) ~= nil then
       return true
     end
   end
@@ -73,8 +109,8 @@ local function pretty_name(name)
 end
 
 local function sensor_lines(proxy)
-  local fn = proxy and proxy.getSensorInformation
-  if type(fn) ~= "function" then
+  local fn = method(proxy, "getSensorInformation")
+  if fn == nil then
     return nil
   end
   local ok, lines = pcall(fn, proxy)
@@ -88,6 +124,16 @@ local function is_direct(proxy)
   return has_any(proxy, STORED_METHODS) and has_any(proxy, CAPACITY_METHODS)
 end
 
+local function sensor_signature(lines)
+  if type(lines) ~= "table" then
+    return false
+  end
+  local text = table.concat(lines, "\n"):lower()
+  local stored = text:find("eu stored", 1, true) ~= nil or text:find("stored eu", 1, true) ~= nil
+  local capacity = text:find("capacity", 1, true) ~= nil
+  return stored and capacity
+end
+
 ---@param proxy table
 ---@return number|nil score
 ---@return string|nil kind
@@ -95,12 +141,23 @@ local function classify(proxy)
   local name = pretty_name(call(proxy, "getName"))
   local lowered = name and name:lower() or ""
   local named = lowered:find("capacitor", 1, true) ~= nil or lowered:find("lapotron", 1, true) ~= nil
+  local lines = sensor_lines(proxy)
 
-  if sensor_lines(proxy) ~= nil then
-    return named and 100 or 60, "sensor"
+  if lines ~= nil then
+    if named then
+      return 100, "sensor"
+    end
+    if sensor_signature(lines) then
+      return 70, "sensor"
+    end
   end
   if is_direct(proxy) then
-    return named and 90 or 30, "direct"
+    if named then
+      return 90, "direct"
+    end
+    if name == nil then
+      return 40, "direct"
+    end
   end
   return nil, nil
 end
@@ -141,8 +198,8 @@ end
 ---@param _reader boolean|nil
 ---@return number, string|nil
 function DirectReader:pull(_reader)
-  local stored = first_number(self._dev, STORED_METHODS)
-  local capacity = first_number(self._dev, CAPACITY_METHODS)
+  local stored = best_number(self._dev, STORED_METHODS)
+  local capacity = best_number(self._dev, CAPACITY_METHODS)
   if stored == nil and capacity == nil then
     return 1, "component '" .. tostring(self.address) .. "' did not answer"
   end
@@ -233,19 +290,92 @@ local function proxy_for(component, address)
   return nil
 end
 
+local function plausible(cache)
+  if type(cache) ~= "table" then
+    return false
+  end
+  local stored = cache.stored
+  local capacity = cache.capacityTotal
+  local percent = cache.capacityUsed
+  if type(stored) ~= "number" or type(capacity) ~= "number" or type(percent) ~= "number" then
+    return false
+  end
+  if stored ~= stored or capacity ~= capacity or percent ~= percent then
+    return false
+  end
+  if capacity <= 0 or stored < 0 or percent < 0 or percent > 100 then
+    return false
+  end
+  return stored <= capacity * 1.01 + 1
+end
+
+local HybridReader = {}
+HybridReader.__index = HybridReader
+
+local function make_hybrid(legacy, fallback)
+  return setmetatable({
+    _legacy = legacy,
+    _fallback = fallback,
+    cache = legacy.cache or fallback.cache or empty_cache(),
+    backend = "legacy",
+  }, HybridReader)
+end
+
+---@param _reader boolean|nil
+---@return number, string|nil
+function HybridReader:pull(_reader)
+  if self._legacy ~= nil then
+    local ok, status = pcall(self._legacy.pull, self._legacy, true)
+    if ok and status == 0 and plausible(self._legacy.cache) then
+      self.cache = self._legacy.cache
+      self.backend = "legacy"
+      return 0
+    end
+    pcall(self._legacy.dispose, self._legacy)
+    self._legacy = nil
+  end
+
+  if self._fallback ~= nil then
+    local ok, status = pcall(self._fallback.pull, self._fallback, true)
+    if ok and status == 0 then
+      self.cache = self._fallback.cache
+      self.backend = "direct"
+      return 0
+    end
+  end
+
+  return 1, "capacitor did not answer"
+end
+
+---@return nil
+function HybridReader:dispose()
+  if self._legacy ~= nil then
+    pcall(self._legacy.dispose, self._legacy)
+    self._legacy = nil
+  end
+  if self._fallback ~= nil then
+    pcall(self._fallback.dispose, self._fallback)
+    self._fallback = nil
+  end
+  self.cache = empty_cache()
+end
+
 local function adapt(proxy, address, legacy_factory)
+  local direct = is_direct(proxy)
   if sensor_lines(proxy) ~= nil then
     local reader, err = legacy_factory(address)
     if reader ~= nil then
+      if direct then
+        return make_hybrid(reader, DirectReader.new(proxy, address, call(proxy, "getName")))
+      end
       return reader
     end
-    local fallback_err = err
-    if is_direct(proxy) then
+    if direct then
       return DirectReader.new(proxy, address, call(proxy, "getName"))
     end
-    return nil, fallback_err
+    return nil, err
   end
-  if is_direct(proxy) then
+  if direct then
     return DirectReader.new(proxy, address, call(proxy, "getName"))
   end
   return nil, "device '" .. tostring(address) .. "' is not a supported capacitor"
@@ -269,7 +399,7 @@ function M.open(cfg, deps)
   if wanted == "v_lapotron" then
     return legacy_factory(wanted)
   end
-  if type(component) ~= "table" or type(component.list) ~= "function" then
+  if type(component) ~= "table" then
     return nil, "no component API"
   end
 
@@ -279,6 +409,10 @@ function M.open(cfg, deps)
       return nil, "device '" .. tostring(wanted) .. "' not found"
     end
     return adapt(proxy, address, legacy_factory)
+  end
+
+  if type(component.list) ~= "function" then
+    return nil, "no component API"
   end
 
   local best_proxy, best_address, best_score

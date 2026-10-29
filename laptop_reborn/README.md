@@ -135,16 +135,20 @@ shell until the dashboard exits, which is intentional on a dedicated laptop.
 
 - **Classic lapotronic capacitor** with the 24-line `getSensorInformation()` API
   (handled by `ab_lapotron`). Publishes 5 s / 5 m / 1 h averages and maintenance.
-- **GT supercapacitor / energy container** with the direct `gt_machine` or
-  `gt_energyContainer` getters: `getEUStored` / `getStoredEU`,
-  `getEUCapacity` / `getEUMaxStored`, `getAverageElectricInput`,
-  `getAverageElectricOutput`, and optional `getName` / `isMachineActive`.
-  Storage, charge, in/out/net, edge time, and status work; 5 m / 1 h averages
-  are not exposed by this API and are omitted.
+- **GT supercapacitor / energy container** via the compound `gt_machine`
+  environment. On GTNH 2.8.4 this exposes both the 24-line sensor API and the
+  direct getters (`getEUStored` / `getStoredEU`, `getEUCapacity` /
+  `getEUMaxStored`, `getAverageElectricInput`, `getAverageElectricOutput`,
+  `getName`, `isMachineActive`). The program prefers the sensor API because it
+  carries the true large-number capacity and the 5 m / 1 h averages, then falls
+  back to the direct getters automatically if the sensor format is missing or
+  cannot be parsed. Direct-only storage still provides charge, in/out/net, edge
+  time, and status; 5 m / 1 h averages may be omitted in that fallback.
 
 When several energy blocks are connected, a device whose `getName()` contains
-`capacitor` or `lapotron` wins. Pin a specific device with `DEV_LAPOTRON` (the
-component address) in `/etc/laptop_reborn.config.lua`.
+`capacitor` or `lapotron` wins; unrelated 24-line GT machines are ignored. Pin
+a specific device with `DEV_LAPOTRON` (the component address) in
+`/etc/laptop_reborn.config.lua`.
 
 Allow the broker and the luamqtt download in `config/OpenComputers.cfg`:
 

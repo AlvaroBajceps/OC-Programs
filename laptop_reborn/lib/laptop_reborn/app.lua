@@ -86,12 +86,12 @@ local function require_first(deps, key, module)
   return nil
 end
 
-local function make_reader(cfg, deps)
+local function make_reader(cfg, deps, component)
   local factory = deps.lapotron_factory
   if factory == nil then
     local adapter = deps.lapotron or require("laptop_reborn.lapotron")
     return adapter.open(cfg, {
-      component = deps.component,
+      component = component or deps.component,
       legacy_factory = deps.legacy_lapotron_factory,
     })
   end
@@ -325,7 +325,7 @@ function M.run(cfg, deps)
   end
 
   local reader
-  local reader_ok, reader_result, reader_err = pcall(make_reader, cfg, deps)
+  local reader_ok, reader_result, reader_err = pcall(make_reader, cfg, deps, component)
   if reader_ok then
     reader = reader_result
   end
@@ -497,9 +497,10 @@ function M.run(cfg, deps)
     end
     if type(gpu.getScreen) == "function" then
       local ok, address = pcall(gpu.getScreen)
-      if ok then
-        return address ~= nil and address ~= ""
+      if not ok then
+        return false
       end
+      return address ~= nil and address ~= ""
     end
     return true
   end
