@@ -1,9 +1,10 @@
 # Laptop Reborn
 
-Graphical OpenComputers dashboard for a GregTech **Lapotronic Capacitor**. It
-replaces the old text-mode `laptop` program with a coloured, double-buffered
-panel, keeps the original redstone telegraph byte-for-byte, and publishes the
-same telemetry to Home Assistant over MQTT.
+Graphical OpenComputers dashboard for GregTech **lapotronic capacitors,
+supercapacitors, and other EU energy-storage blocks**. It replaces the old
+text-mode `laptop` program with a coloured, double-buffered panel, keeps the
+original redstone telegraph byte-for-byte, and publishes the same telemetry to
+Home Assistant over MQTT.
 
 - **Local UI** — battery gauge, in/out/net power, time to full/empty, GT energy
   status, maintenance flag, lapotron online state, sparkline history.
@@ -126,7 +127,24 @@ shell until the dashboard exits, which is intentional on a dedicated laptop.
 | OpenOS 1.8.9 (bundled with the GTNH fork) | `thread`, `event`, `buffer`, `filesystem`. |
 | Lua 5.3 CPU or `defaultLua53=true` | The package targets Lua 5.3. |
 | Broker allow-rule | GTNH OC denies `172.16.0.0/12` by default. |
-| Lapotron Adapter | The capacitor must be readable through an Adapter or directly. |
+| Capacitor Adapter / direct link | The capacitor or supercapacitor must be readable through an Adapter or directly. |
+
+## Supported storages
+
+`laptop_reborn` auto-detects the connected storage at startup:
+
+- **Classic lapotronic capacitor** with the 24-line `getSensorInformation()` API
+  (handled by `ab_lapotron`). Publishes 5 s / 5 m / 1 h averages and maintenance.
+- **GT supercapacitor / energy container** with the direct `gt_machine` or
+  `gt_energyContainer` getters: `getEUStored` / `getStoredEU`,
+  `getEUCapacity` / `getEUMaxStored`, `getAverageElectricInput`,
+  `getAverageElectricOutput`, and optional `getName` / `isMachineActive`.
+  Storage, charge, in/out/net, edge time, and status work; 5 m / 1 h averages
+  are not exposed by this API and are omitted.
+
+When several energy blocks are connected, a device whose `getName()` contains
+`capacitor` or `lapotron` wins. Pin a specific device with `DEV_LAPOTRON` (the
+component address) in `/etc/laptop_reborn.config.lua`.
 
 Allow the broker and the luamqtt download in `config/OpenComputers.cfg`:
 
@@ -286,8 +304,8 @@ display, HA, and mqtt_boot specs.
 
 1. `oppm install laptop_reborn` reports no missing files.
 2. `laptop_reborn -V` starts against the virtual lapotron and draws the panel.
-3. `laptop_reborn` with the real capacitor shows charge, stored/total EU,
-   in/out/net, edge time, and status.
+3. `laptop_reborn` with the real capacitor or supercapacitor shows charge,
+   stored/total EU, in/out/net, edge time, and status.
 4. Press `T`: the redstone outputs drop to 0 and the footer badge changes.
 5. Press `T` again: the telegraph resumes on `east`/`up`/`west`.
 6. In HA, the device appears with eleven entities and `Broker Link = ON`.
@@ -303,6 +321,7 @@ display, HA, and mqtt_boot specs.
 
 | Symptom | Likely cause |
 |---|---|
+| `no supported capacitor/energy storage` | No component exposes either the 24-line sensor API or the direct EU getters. Check the Adapter/cable, or set `DEV_LAPOTRON` to the component address. |
 | `luamqtt unavailable` / `module 'mqtt' not found` | Internet Card missing, `raw.githubusercontent.com` blocked, or `/lib/mqtt` not writable. The program retries every `MQTT_RETRY` seconds; it never exits. |
 | Broker unreachable / `CONNACK` failure | OC filter still denies `172.16.69.4`, Mosquitto listens only on loopback, or the credentials are wrong. The UI keeps running and the link shows `RETRY`/`FAULT`. |
 | Back-buffer / VRAM warning | The GPU cannot allocate a full-screen buffer. Lower the scale (`-x 1x`) or use a tier-2 GPU/screen. Without a buffer the display still draws directly. |

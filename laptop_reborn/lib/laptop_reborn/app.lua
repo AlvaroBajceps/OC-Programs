@@ -89,7 +89,11 @@ end
 local function make_reader(cfg, deps)
   local factory = deps.lapotron_factory
   if factory == nil then
-    return require("ab_lapotron").new(cfg.DEV_LAPOTRON)
+    local adapter = deps.lapotron or require("laptop_reborn.lapotron")
+    return adapter.open(cfg, {
+      component = deps.component,
+      legacy_factory = deps.legacy_lapotron_factory,
+    })
   end
   if type(factory) == "table" and type(factory.new) == "function" then
     return factory.new(factory, cfg.DEV_LAPOTRON)
@@ -326,7 +330,7 @@ function M.run(cfg, deps)
     reader = reader_result
   end
   if reader == nil then
-    say("laptop_reborn: no lapotron capacitor: " .. tostring(reader_ok and reader_err or reader_result))
+    say("laptop_reborn: no supported capacitor/energy storage: " .. tostring(reader_ok and reader_err or reader_result))
     return 1
   end
 
