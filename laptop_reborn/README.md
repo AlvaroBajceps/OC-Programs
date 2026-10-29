@@ -40,7 +40,7 @@ Q quit R refresh T redstone  RS ON
 Full, 80×25 (`-x max` or `-x auto` on a tier-2 screen):
 
 ```text
-  LAPTOP REBORN v1.0.0                                              ONLINE 80x25
+  LAPTOP REBORN v1.1.0                                              ONLINE 80x25
 ┌────────────────────────┐┌─────────────────────────┐┌─────────────────────────┐
 │        BATTERY         ││POWER FLOW               ││        MAINT OK         │
 │        61%             ││  IN 119.6 kEU/t         ││        LAPOTRON ONLINE  │
@@ -48,7 +48,7 @@ Full, 80×25 (`-x max` or `-x auto` on a tier-2 screen):
 │        CAP 19.44 GEU   ││  NET 2.6 kEU/t          ││        Running normally │
 │        LOSS 112.0 EU/t ││AVG 5m                   ││        LINK ONLINE      │
 │                        ││  IN 120.2 kEU/t         ││        CAP 19.44 GEU    │
-│                        ││  OUT 112.4 kEU/t        ││        PANEL v1.0.0     │
+│                        ││  OUT 112.4 kEU/t        ││        PANEL v1.1.0     │
 └────────────────────────┘│AVG 1h                   ││        SCALE 80x25      │
 ┌────────────────────────┐│  IN 120.2 kEU/t         ││                         │
 │CHARGE         61%      ││  OUT 112.4 kEU/t        ││                         │
@@ -249,6 +249,7 @@ file and `os.rename` when the filesystem supports it.
 -M, --no-mqtt       disable MQTT / Home Assistant telemetry
 -x, --scale=[mode]  1x | 2x | max | auto
 --version           print the version
+--diag              print component API / gt_machine discovery diagnostics
 ```
 
 Scale presets are 34×12 (`1x`), 68×24 (`2x`), and 80×25 (`max`). `auto`
@@ -325,7 +326,8 @@ display, HA, and mqtt_boot specs.
 
 | Symptom | Likely cause |
 |---|---|
-| `no supported capacitor/energy storage` | No component exposes either the 24-line sensor API or the direct EU getters. Check the Adapter/cable, or set `DEV_LAPOTRON` to the component address. |
+| `no supported capacitor/energy storage` | No component exposes either the 24-line sensor API or the direct EU getters. Check the Adapter/cable, or set `DEV_LAPOTRON` to the component address. Run `laptop_reborn --diag` to see what the program can enumerate. |
+| Old `no component API` error persists after `oppm update` | The installed build is stale or an old module was cached in the current shell. `laptop_reborn --version` must report **1.1.0**; if it does not, push/pull the OPPM repo and update again. v1.1.0 clears its own module cache at startup; reboot once if the old `bin` is still loaded. |
 | `luamqtt unavailable` / `module 'mqtt' not found` | Internet Card missing, `raw.githubusercontent.com` blocked, or `/lib/mqtt` not writable. The program retries every `MQTT_RETRY` seconds; it never exits. |
 | Broker unreachable / `CONNACK` failure | OC filter still denies `172.16.69.4`, Mosquitto listens only on loopback, or the credentials are wrong. The UI keeps running and the link shows `RETRY`/`FAULT`. |
 | Back-buffer / VRAM warning | The GPU cannot allocate a full-screen buffer. Lower the scale (`-x 1x`) or use a tier-2 GPU/screen. Without a buffer the display still draws directly. |

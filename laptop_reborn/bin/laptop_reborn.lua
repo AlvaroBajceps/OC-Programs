@@ -3,7 +3,7 @@
 
 local M = {}
 
-M.VERSION = "1.0.0"
+M.VERSION = "1.1.0"
 
 local SCALES = {
   ["1x"] = true,
@@ -36,7 +36,110 @@ function M.help()
     "-M, --no-mqtt       disable MQTT/Home Assistant telemetry",
     "-x, --scale=[mode]  1x | 2x | max | auto",
     "--version           print the version",
+    "--diag              print component discovery diagnostics",
   }, "\n")
+end
+
+local function clear_module_cache()
+  for key in pairs(package.loaded) do
+    if key == "laptop_reborn" or key:match("^laptop_reborn%.") then
+      package.loaded[key] = nil
+    end
+  end
+end
+
+---@param deps table|nil
+---@return number
+function M.diagnose(deps)
+  deps = deps or {}
+  local io_module = deps.io or io
+  local function say(text)
+    pcall(io_module.write, tostring(text) .. "\n")
+  end
+
+  local methods = deps.methods or require("laptop_reborn.methods")
+  local component = deps.component
+  local candidates = { package.loaded.component }
+  for _, candidate in ipairs(candidates) do
+    if methods.get(component, "list") == nil and methods.get(candidate, "list") ~= nil then
+      component = candidate
+    end
+  end
+  if methods.get(component, "list") == nil then
+    local ok, loaded = pcall(require, "component")
+    if ok and type(loaded) == "table" then
+      component = loaded
+    end
+  end
+
+  say("Laptop Reborn v" .. M.VERSION)
+  say("component API: " .. type(component) .. ", list=" .. type(component and component.list))
+  if methods.get(component, "list") == nil then
+    say("component.list is unavailable from this program")
+    return 1
+  end
+
+  local ok, listed = pcall(component.list)
+  if not ok then
+    say("component.list failed: " .. tostring(listed))
+    return 1
+  end
+
+  local entries = {}
+  if type(listed) == "table" then
+    for address, kind in pairs(listed) do
+      entries[#entries + 1] = { address, kind }
+    end
+  elseif type(listed) == "function" then
+    while true do
+      local address, kind = listed()
+      if address == nil then
+        break
+      end
+      entries[#entries + 1] = { address, kind }
+    end
+  end
+  table.sort(entries, function(a, b)
+    return tostring(a[1]) < tostring(b[1])
+  end)
+
+  local matched = 0
+  local function report(entry)
+    local address, kind = entry[1], entry[2]
+    local proxy_ok, proxy = pcall(component.proxy, address)
+    local name = "?"
+    if proxy_ok and type(proxy) == "table" and methods.get(proxy, "getName") ~= nil then
+      local name_ok, value = methods.call(proxy, "getName")
+      if name_ok and value ~= nil then
+        name = tostring(value)
+      end
+    end
+    say(string.format("%s  %s  %s", tostring(address), tostring(kind), name))
+  end
+
+  for _, entry in ipairs(entries) do
+    local kind = tostring(entry[2] or "")
+    local proxy_ok, proxy = pcall(component.proxy, entry[1])
+    local name = ""
+    if proxy_ok and type(proxy) == "table" and methods.get(proxy, "getName") ~= nil then
+      local name_ok, value = methods.call(proxy, "getName")
+      if name_ok and value ~= nil then
+        name = tostring(value):lower()
+      end
+    end
+    if kind == "gt_machine" or name:find("capacitor", 1, true) or name:find("lapotron", 1, true) then
+      report(entry)
+      matched = matched + 1
+    end
+  end
+
+  if matched == 0 then
+    say("no gt_machine/capacitor component matched; listing all components:")
+    for _, entry in ipairs(entries) do
+      report(entry)
+    end
+  end
+  return 0
 end
 
 local function write_config(path, cfg, deps)
@@ -79,12 +182,11 @@ end
 function M.main(argv, deps)
   argv = argv or {}
   deps = deps or {}
+  clear_module_cache()
 
   local shell = deps.shell or require("shell")
-  local config = deps.config or require("laptop_reborn.config")
   local computer = deps.computer or require("computer")
   local io_module = deps.io or io
-  local app = deps.app or require("laptop_reborn.app")
 
   local function say(text)
     pcall(io_module.write, tostring(text) .. "\n")
@@ -100,6 +202,12 @@ function M.main(argv, deps)
     say("Laptop Reborn v" .. M.VERSION)
     return 0
   end
+  if opts.diag then
+    return M.diagnose(deps)
+  end
+
+  local config = deps.config or require("laptop_reborn.config")
+  local app = deps.app or require("laptop_reborn.app")
 
   if opts.virtual then
     opts.V = true

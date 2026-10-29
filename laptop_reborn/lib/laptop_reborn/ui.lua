@@ -620,7 +620,7 @@ function M.new(display, opts)
     display = display,
     p = opts.palette or theme.PALETTES.dark,
     icons = opts.show_icons ~= false,
-    version = tostring(opts.version or "1.0.0"),
+    version = tostring(opts.version or "1.1.0"),
     w = 0,
     h = 0,
     regions = {},

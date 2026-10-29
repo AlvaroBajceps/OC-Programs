@@ -2,6 +2,8 @@
 -- component is bound at require time. Every primitive clips to the current
 -- resolution so a malformed rect can never throw from gpu.set/fill.
 
+local methods = require("laptop_reborn.methods")
+
 local M = {}
 
 local SINGLE_BOX = {
@@ -178,8 +180,8 @@ function M.new(deps)
       pcall(gpu.freeBuffer, back_buf)
       back_buf = nil
     end
-    if type(gpu.allocateBuffer) == "function" then
-      local ok, buf = pcall(gpu.allocateBuffer, scr_w, scr_h)
+    if methods.get(gpu, "allocateBuffer") ~= nil then
+      local ok, buf = methods.call(gpu, "allocateBuffer", scr_w, scr_h)
       if ok and buf then
         back_buf = buf
         pcall(gpu.setActiveBuffer, back_buf)

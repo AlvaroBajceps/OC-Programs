@@ -2,6 +2,8 @@
 -- the graphical UI. Every external facility is injected so the loop is testable
 -- without an OpenComputers runtime.
 
+local methods = require("laptop_reborn.methods")
+
 local M = {}
 
 local DIFF_FIELDS = {
@@ -113,13 +115,13 @@ local function resolve_redstone(cfg, deps, component)
     local get_ok, full = pcall(component.get, address)
     if get_ok and full ~= nil and full ~= "" then
       local proxy_ok, proxy = pcall(component.proxy, full)
-      if proxy_ok and type(proxy) == "table" and type(proxy.setOutput) == "function" then
+      if proxy_ok and methods.get(proxy, "setOutput") ~= nil then
         return proxy
       end
     end
     return nil
   end
-  if type(component.redstone) == "table" and type(component.redstone.setOutput) == "function" then
+  if methods.get(component.redstone, "setOutput") ~= nil then
     return component.redstone
   end
   return nil
@@ -129,6 +131,25 @@ local function resolve_model(deps)
   local model_module = deps.model or require("laptop_reborn.model")
   local instance = model_module.new({ kf_factory = deps.kf_factory })
   return model_module, instance
+end
+
+local function resolve_component(deps)
+  local candidates = { deps.component, package.loaded.component }
+  for _, candidate in ipairs(candidates) do
+    if methods.get(candidate, "list") ~= nil then
+      return candidate
+    end
+  end
+  local ok, loaded = pcall(require, "component")
+  if ok and type(loaded) == "table" then
+    return loaded
+  end
+  for _, candidate in ipairs(candidates) do
+    if type(candidate) == "table" then
+      return candidate
+    end
+  end
+  return nil
 end
 
 local function read_uptime(computer)
@@ -309,13 +330,7 @@ function M.run(cfg, deps)
 
   local computer = deps.computer or require("computer")
   local event = deps.event or require("event")
-  local component = deps.component
-  if component == nil then
-    local ok, loaded = pcall(require, "component")
-    if ok then
-      component = loaded
-    end
-  end
+  local component = resolve_component(deps)
   local thread = deps.thread or require("thread")
   local process = require_first(deps, "process", "process")
 
@@ -330,7 +345,13 @@ function M.run(cfg, deps)
     reader = reader_result
   end
   if reader == nil then
-    say("laptop_reborn: no supported capacitor/energy storage: " .. tostring(reader_ok and reader_err or reader_result))
+    say(
+      "laptop_reborn v"
+        .. tostring(cfg.VERSION)
+        .. ": no supported capacitor/energy storage: "
+        .. tostring(reader_ok and reader_err or reader_result)
+    )
+    say("Run 'laptop_reborn --diag' to print component discovery details.")
     return 1
   end
 
@@ -495,8 +516,8 @@ function M.run(cfg, deps)
     if gpu == nil then
       return false
     end
-    if type(gpu.getScreen) == "function" then
-      local ok, address = pcall(gpu.getScreen)
+    if methods.get(gpu, "getScreen") ~= nil then
+      local ok, address = methods.call(gpu, "getScreen")
       if not ok then
         return false
       end

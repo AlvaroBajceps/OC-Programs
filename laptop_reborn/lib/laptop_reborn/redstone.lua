@@ -1,6 +1,8 @@
 -- Redstone telegraph with exact parity to the old laptop v2.3.0 output math.
 -- Sides are returned as names; apply resolves them through the OC sides table.
 
+local methods = require("laptop_reborn.methods")
+
 local M = {}
 
 local IV_SCALE = 8 * (4 ^ 5)
@@ -100,7 +102,7 @@ function M.apply(reddev, out, deps)
   if not reddev then
     return false, "no redstone device"
   end
-  if type(reddev.setOutput) ~= "function" then
+  if methods.get(reddev, "setOutput") == nil then
     return false, "no setOutput on redstone device"
   end
 
@@ -115,7 +117,7 @@ function M.apply(reddev, out, deps)
     if type(entry) == "table" then
       local side = sides[entry.side]
       if side ~= nil then
-        local ok = pcall(reddev.setOutput, reddev, side, entry.level)
+        local ok = methods.call(reddev, "setOutput", side, entry.level)
         if not ok then
           ok_all = false
         end
@@ -137,13 +139,13 @@ function M.zero(reddev, _deps)
   if not reddev then
     return false, "no redstone device"
   end
-  if type(reddev.setOutput) ~= "function" then
+  if methods.get(reddev, "setOutput") == nil then
     return false, "no setOutput on redstone device"
   end
 
   local ok_all = true
   for side = 0, 5 do
-    local ok = pcall(reddev.setOutput, reddev, side, 0)
+    local ok = methods.call(reddev, "setOutput", side, 0)
     if not ok then
       ok_all = false
     end

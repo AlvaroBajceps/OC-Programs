@@ -5,6 +5,8 @@
 --   * a GT supercapacitor / energy container with direct EU getters.
 -- The rest of the program consumes the same cache table either way.
 
+local methods = require("laptop_reborn.methods")
+
 local M = {}
 
 local STORED_METHODS = { "getEUStored", "getStoredEU", "getStoredEUString" }
@@ -12,29 +14,12 @@ local CAPACITY_METHODS = { "getEUCapacity", "getEUMaxStored", "getEUCapacityStri
 local INPUT_METHODS = { "getAverageElectricInput", "getEUInputAverage" }
 local OUTPUT_METHODS = { "getAverageElectricOutput", "getEUOutputAverage" }
 
-local function method(proxy, name)
-  if type(proxy) ~= "table" then
-    return nil
-  end
-  local ok, fn = pcall(function()
-    return proxy[name]
-  end)
-  if ok and type(fn) == "function" then
-    return fn
+local function call(proxy, name)
+  local ok, value = methods.call(proxy, name)
+  if ok then
+    return value
   end
   return nil
-end
-
-local function call(proxy, name)
-  local fn = method(proxy, name)
-  if fn == nil then
-    return nil
-  end
-  local ok, value = pcall(fn, proxy)
-  if not ok then
-    return nil
-  end
-  return value
 end
 
 local function as_number(value)
@@ -86,7 +71,7 @@ end
 
 local function has_any(proxy, names)
   for _, name in ipairs(names) do
-    if method(proxy, name) ~= nil then
+    if methods.get(proxy, name) ~= nil then
       return true
     end
   end
@@ -109,11 +94,7 @@ local function pretty_name(name)
 end
 
 local function sensor_lines(proxy)
-  local fn = method(proxy, "getSensorInformation")
-  if fn == nil then
-    return nil
-  end
-  local ok, lines = pcall(fn, proxy)
+  local ok, lines = methods.call(proxy, "getSensorInformation")
   if ok and type(lines) == "table" and #lines == 24 then
     return lines
   end
@@ -411,7 +392,7 @@ function M.open(cfg, deps)
     return adapt(proxy, address, legacy_factory)
   end
 
-  if type(component.list) ~= "function" then
+  if methods.get(component, "list") == nil then
     return nil, "no component API"
   end
 
