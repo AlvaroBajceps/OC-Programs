@@ -4,7 +4,8 @@
 local os = require("os")
 local term = require("term")
 
+-- selene: allow(unused_variable)
 function start()
-    term.clear()
-    os.execute("laptop")
+  term.clear()
+  os.execute("laptop")
 end
