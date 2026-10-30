@@ -656,7 +656,7 @@ function M.run(cfg, deps)
       say("laptop_reborn: MQTT thread could not start: " .. tostring(thread_handle))
     end
   else
-    session.link = "OFF"
+    session.link = "DISABLED"
     say("laptop_reborn: MQTT disabled by ENABLE_MQTT=false or -M")
   end
 
