@@ -262,4 +262,25 @@ function M.ioloop_options()
   return { sleep_function = sleep, sleep = 0.05, timeout = 0.05 }
 end
 
+---Creates a fresh ioloop for one MQTT session. luamqtt's `get_ioloop` returns a
+---module-level singleton, and `run_until_clients` leaves it `running` with every
+---client still registered when a callback raises. Every later attempt would then
+---attach another client with the same id to that dead loop, and the resulting
+---duplicate clients kick each other off the broker forever. A private loop is
+---abandoned with the failed session instead.
+---@param mqtt table
+---@param options table|nil
+---@return table loop
+function M.create_ioloop(mqtt, options)
+  options = options or M.ioloop_options()
+  local loaded, module = pcall(require, "mqtt.ioloop")
+  if loaded and type(module) == "table" and type(module.create) == "function" then
+    local created, loop = pcall(module.create, options)
+    if created and loop ~= nil then
+      return loop
+    end
+  end
+  return mqtt.get_ioloop(true, options)
+end
+
 return M

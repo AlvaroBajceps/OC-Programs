@@ -1,6 +1,6 @@
 local M = {}
 
-M.VERSION = "1.2.0"
+M.VERSION = "1.2.1"
 
 local TOPIC_KEYS = {
   "charge",
@@ -64,6 +64,8 @@ local function make_defaults(address)
     RECONNECT = 5,
     STATE_INTERVAL = 30,
     MQTT_RETRY = 10,
+    MQTT_CONNECT_TIMEOUT = 30,
+    MQTT_ACK_TIMEOUT = 75,
     MQTT_DIR = "/lib/mqtt",
     POLL_INTERVAL = 1.0,
     LOOP_INTERVAL = 0.4,

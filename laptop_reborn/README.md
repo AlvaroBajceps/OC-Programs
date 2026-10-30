@@ -17,10 +17,13 @@ Home Assistant over MQTT.
   topic. Telemetry is OC → HA only in v1; the program never subscribes to
   commands.
 - **Resilient runtime** — MQTT lives in its own OpenOS thread, so a broker
-  outage or a slow luamqtt download never freezes the UI.
+  outage or a slow luamqtt download never freezes the UI. Each session uses a
+  private luamqtt ioloop and is supervised: a crashed session, a broker restart,
+  a half-open socket, or a stalled `CONNACK` is torn down and retried
+  automatically without restarting the program or the computer.
 
 Package: `laptop_reborn` in the `OC-Programs` OPPM repository. Current version
-**1.2.0**.
+**1.2.1**.
 
 ## Screens
 
@@ -44,7 +47,7 @@ Q quit R refresh T redstone  RS ON
 Full, 80×25 (`-x max` or `-x auto` on a tier-2 screen):
 
 ```text
-  LAPTOP REBORN v1.2.0                                           CHARGING  80x25
+  LAPTOP REBORN v1.2.1                                           CHARGING  80x25
 ┌─────────────────────────┐┌────────────────────────────┐┌─────────────────────┐
 │        BATTERY       85%││POWER FLOW                  ││  CHARGING           │
 │                         ││  IN 98.3 kEU/t             ││MAINT OK             │
@@ -285,6 +288,9 @@ return {
   LOOP_INTERVAL = 0.4,
   UI_TICK = 2,
   STATE_INTERVAL = 30,
+  MQTT_RETRY = 10,
+  MQTT_CONNECT_TIMEOUT = 30,
+  MQTT_ACK_TIMEOUT = 75,
 }
 ```
 
@@ -382,15 +388,19 @@ theme, layout, display, ui, HA, and mqtt_boot specs.
 12. Start a second copy: it refuses with an "already running" message.
 13. Reboot with `rc laptop_reborn enable`: the dashboard starts before the
     shell and reconnects to the broker.
+14. Restart the broker or stop it for longer than `RECONNECT`: `Broker Link`
+    returns to `ON`, discovery and state are republished, and HA resumes
+    without restarting the dashboard.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
 | `no supported capacitor/energy storage` | No component exposes either the 24-line sensor API or the direct EU getters. Check the Adapter/cable, or set `DEV_LAPOTRON` to the component address. Run `laptop_reborn --diag` to see what the program can enumerate. |
-| Old `no component API` error persists after `oppm update` | The installed build is stale or an old module was cached in the current shell. `laptop_reborn --version` must report **1.2.0**; if it does not, push/pull the OPPM repo and update again. v1.2.0 clears its own module cache at startup; reboot once if the old `bin` is still loaded. |
-| `luamqtt unavailable` / `module 'mqtt' not found` | Internet Card missing, `raw.githubusercontent.com` blocked, or `/lib/mqtt` not writable. The program retries every `MQTT_RETRY` seconds; it never exits. |
-| Broker unreachable / `CONNACK` failure | OC filter still denies `172.16.69.4`, Mosquitto listens only on loopback, or the credentials are wrong. The UI keeps running and the link shows `RETRY`/`FAULT`. |
+| Old `no component API` error persists after `oppm update` | The installed build is stale or an old module was cached in the current shell. `laptop_reborn --version` must report **1.2.1**; if it does not, push/pull the OPPM repo and update again. v1.2.0+ clears its own module cache at startup; reboot once if the old `bin` is still loaded. |
+| `luamqtt unavailable` / `module 'mqtt' not found` | Internet Card missing, `raw.githubusercontent.com` blocked, or `/lib/mqtt` not writable. The supervisor retries every `MQTT_RETRY` seconds; it never exits. |
+| Broker unreachable / `CONNACK` failure | OC filter still denies `172.16.69.4`, Mosquitto listens only on loopback, or the credentials are wrong. The UI keeps running and the link shows `RETRY`/`FAULT`; the session retries until it succeeds. |
+| Link stays `RETRY` after the broker is back | Check `MQTT_CONNECT_TIMEOUT` / `MQTT_ACK_TIMEOUT` and the broker log. A half-open socket is detected by missing QoS 1 acknowledgements and the session is restarted automatically. |
 | Back-buffer / VRAM warning | The GPU cannot allocate a full-screen buffer. Lower the scale (`-x 1x`) or use a tier-2 GPU/screen. Without a buffer the display still draws directly. |
 | `already running` | Another `laptop_reborn` survived the previous stop. Stop it or reboot once. Two instances would fight over the MQTT client ID and redstone sides. |
 | `display lost; stopping` | The screen was removed or another program bound the GPU. The program stops instead of leaving a headless zombie; restart it after restoring the screen. |

@@ -3,7 +3,7 @@
 
 local M = {}
 
-M.VERSION = "1.2.0"
+M.VERSION = "1.2.1"
 
 local SCALES = {
   ["1x"] = true,

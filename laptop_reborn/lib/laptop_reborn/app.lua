@@ -190,9 +190,15 @@ function M.run_mqtt_session(cfg, session, deps)
   local os_module = deps.os or os
   local sleep = deps.sleep or rawget(os_module, "sleep") or function() end
   local computer = deps.computer
+  local connect_timeout = tonumber(cfg.MQTT_CONNECT_TIMEOUT) or 30
+  local ack_timeout = tonumber(cfg.MQTT_ACK_TIMEOUT) or 75
 
   local function stopped()
     return session.stop == true
+  end
+
+  local function uptime()
+    return read_uptime(computer)
   end
 
   local function run_one(mqtt)
@@ -206,6 +212,11 @@ function M.run_mqtt_session(cfg, session, deps)
         should_stop = stopped,
       })
     end
+
+    session.connected = false
+    local started = uptime()
+    session.reconnect_at = started
+    session.ack_pending_since = nil
 
     local client_args = {
       uri = cfg.BROKER_HOST .. ":" .. cfg.BROKER_PORT,
@@ -228,6 +239,22 @@ function M.run_mqtt_session(cfg, session, deps)
     end
 
     local client = mqtt.client(client_args)
+    local loop
+    local tick
+
+    -- luamqtt keeps a client registered while reconnect is set, so even a
+    -- graceful disconnect would be retried. Remove it from the loop as well.
+    local function teardown()
+      pcall(client.disconnect, client)
+      pcall(client.close_connection, client, "session closed")
+      if loop ~= nil then
+        pcall(loop.remove, loop, tick)
+        pcall(loop.remove, loop, client)
+        loop.running = false
+      end
+      session.connected = false
+    end
+
     client:on({
       connect = function(connack)
         if connack.rc ~= 0 then
@@ -237,15 +264,22 @@ function M.run_mqtt_session(cfg, session, deps)
         end
         session.connected = true
         session.link = "ONLINE"
+        session.ack_pending_since = uptime()
+        session.reconnect_at = nil
         pcall(ha.publish_availability, client, cfg, true)
         pcall(ha.publish_discovery, client, cfg)
         pcall(ha.publish_all_state, client, cfg, session.view)
+      end,
+      acknowledge = function()
+        session.ack_pending_since = nil
       end,
       message = function(message)
         client:acknowledge(message)
       end,
       close = function()
         session.connected = false
+        session.ack_pending_since = nil
+        session.reconnect_at = uptime()
         if session.link ~= "FAULT" then
           session.link = "RETRY"
         end
@@ -253,16 +287,23 @@ function M.run_mqtt_session(cfg, session, deps)
       end,
       error = function()
         session.connected = false
+        session.ack_pending_since = nil
         session.link = "FAULT"
+        session.reconnect_at = uptime()
       end,
     })
 
-    local loop = mqtt.get_ioloop(true, boot.ioloop_options())
+    if type(boot.create_ioloop) == "function" then
+      loop = boot.create_ioloop(mqtt)
+    else
+      loop = mqtt.get_ioloop(true, boot.ioloop_options())
+    end
     loop:add(client)
 
-    local last_state = read_uptime(computer)
-    local tick
+    local last_state = uptime()
+    local pending_retry_at = 0
     tick = function()
+      local at = uptime()
       if stopped() then
         pcall(ha.publish_link, client, cfg, session.view, false)
         pcall(ha.publish_availability, client, cfg, false)
@@ -273,32 +314,66 @@ function M.run_mqtt_session(cfg, session, deps)
         return
       end
 
-      if session.rediscover then
-        session.rediscover = false
-        pcall(ha.publish_discovery, client, cfg)
+      -- A silent half-open socket keeps luamqtt "connected" forever because it
+      -- never times out a missing PINGRESP. QoS 1 publishes get a PUBACK, so a
+      -- connected link with no acknowledgement for too long is dead.
+      if session.connected then
+        local pending_since = session.ack_pending_since
+        if pending_since ~= nil and at - pending_since >= ack_timeout then
+          session.link = "RETRY"
+          teardown()
+          return
+        end
+      elseif at - (session.reconnect_at or started) >= connect_timeout then
+        session.link = "RETRY"
+        teardown()
+        return
       end
 
-      if next(session.pending) ~= nil then
+      if session.rediscover and session.connected then
+        session.rediscover = false
+        local called, published = pcall(ha.publish_discovery, client, cfg)
+        if not (called and published) then
+          session.rediscover = true
+        end
+      end
+
+      if next(session.pending) ~= nil and at >= pending_retry_at then
         local batch = {}
         for key in pairs(session.pending) do
           batch[key] = true
         end
-        pcall(ha.publish_changed, client, cfg, session.view, batch)
-        for key in pairs(batch) do
-          session.pending[key] = nil
+        if session.connected and session.ack_pending_since == nil then
+          session.ack_pending_since = at
+        end
+        local called, published = pcall(ha.publish_changed, client, cfg, session.view, batch)
+        if called and published then
+          for key in pairs(batch) do
+            session.pending[key] = nil
+          end
+        else
+          pending_retry_at = at + 2
         end
       end
 
-      local at = read_uptime(computer)
       if at - last_state >= cfg.STATE_INTERVAL then
         last_state = at
-        pcall(ha.publish_all_state, client, cfg, session.view)
-        pcall(ha.publish_link, client, cfg, { link = "ONLINE" }, true)
+        if session.connected and session.ack_pending_since == nil then
+          session.ack_pending_since = at
+        end
+        local called, published = pcall(ha.publish_all_state, client, cfg, session.view)
+        if called and published then
+          pcall(ha.publish_link, client, cfg, { link = "ONLINE" }, true)
+        end
       end
     end
     loop:add(tick)
 
-    loop:run_until_clients()
+    local ran, loop_err = pcall(loop.run_until_clients, loop)
+    teardown()
+    if not ran then
+      error(loop_err, 0)
+    end
   end
 
   while not stopped() do
@@ -325,11 +400,47 @@ function M.run_mqtt_session(cfg, session, deps)
     if mqtt ~= nil and not stopped() then
       local ok = pcall(run_one, mqtt)
       if not ok then
+        session.connected = false
         session.link = "RETRY"
       end
       if not stopped() then
         sleep(cfg.MQTT_RETRY)
       end
+    end
+  end
+end
+
+---Runs the MQTT session until `session.stop`, restarting it after any error.
+---Without this, an exception in the OpenOS thread wrapper calls `os.exit` and
+---takes the whole dashboard down with it, so the only recovery would be a
+---computer reboot.
+---@param cfg table
+---@param session table
+---@param deps table|nil
+---@return nil
+function M.supervise_mqtt(cfg, session, deps)
+  deps = deps or {}
+  local os_module = deps.os or os
+  local sleep = deps.sleep or rawget(os_module, "sleep") or function() end
+  local retry = tonumber(cfg.MQTT_RETRY) or 10
+  local run_session = deps.run_session or M.run_mqtt_session
+
+  while session.stop ~= true do
+    local ok = pcall(run_session, cfg, session, deps)
+    if session.stop == true then
+      return
+    end
+    if not ok then
+      session.connected = false
+      session.link = "RETRY"
+    end
+
+    -- Sleep in slices so a quit request does not wait for the full retry delay.
+    local remaining = retry
+    while session.stop ~= true and remaining > 0 do
+      local slice = math.min(0.5, remaining)
+      remaining = remaining - slice
+      sleep(slice)
     end
   end
 end
@@ -506,7 +617,7 @@ function M.run(cfg, deps)
     mqtt_deps.computer = computer
     mqtt_deps.now = now
     local created, thread_handle = pcall(thread.create, function()
-      M.run_mqtt_session(cfg, session, mqtt_deps)
+      pcall(M.supervise_mqtt, cfg, session, mqtt_deps)
     end)
     if created then
       handle = thread_handle
