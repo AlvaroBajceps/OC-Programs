@@ -664,6 +664,7 @@ function M.run(cfg, deps)
       local ok, err = pcall(M.supervise_mqtt, cfg, session, mqtt_deps)
       if not ok then
         session.link = "FAULT"
+        session.last_error = "thread: " .. tostring(err)
         say("laptop_reborn: MQTT thread failed: " .. tostring(err))
       end
     end)
@@ -671,6 +672,7 @@ function M.run(cfg, deps)
       handle = thread_handle
     else
       session.link = "FAULT"
+      session.last_error = "thread: " .. tostring(thread_handle)
       say("laptop_reborn: MQTT thread could not start: " .. tostring(thread_handle))
     end
   else
