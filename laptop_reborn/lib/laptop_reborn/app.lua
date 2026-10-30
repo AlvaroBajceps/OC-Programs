@@ -228,7 +228,7 @@ function M.run_mqtt_session(cfg, session, deps)
 
     local client_args = {
       uri = cfg.BROKER_HOST .. ":" .. cfg.BROKER_PORT,
-      id = cfg.client_id or (cfg.node .. "_laptop"),
+      id = cfg.node,
       clean = true,
       version = mqtt.v311,
       keep_alive = cfg.KEEP_ALIVE,
@@ -246,22 +246,8 @@ function M.run_mqtt_session(cfg, session, deps)
       client_args.password = cfg.PASSWORD
     end
 
-    local loop = nil
-    if type(boot.create_ioloop) == "function" then
-      loop = boot.create_ioloop(mqtt)
-    else
-      loop = mqtt.get_ioloop(true, boot.ioloop_options())
-    end
     local client = mqtt.client(client_args)
-    -- luamqtt's constructor auto-adds a client to the default ioloop when it is
-    -- already running (for example because mqtt_ha is on this computer). Detach
-    -- it so only this session's private loop drives it.
-    if type(mqtt.get_ioloop) == "function" then
-      local default_loop = mqtt.get_ioloop(false)
-      if default_loop ~= nil and default_loop ~= loop then
-        pcall(default_loop.remove, default_loop, client)
-      end
-    end
+    local loop
     local tick
 
     -- luamqtt keeps a client registered while reconnect is set, so even a
@@ -332,6 +318,11 @@ function M.run_mqtt_session(cfg, session, deps)
       end,
     })
 
+    if type(boot.create_ioloop) == "function" then
+      loop = boot.create_ioloop(mqtt)
+    else
+      loop = mqtt.get_ioloop(true, boot.ioloop_options())
+    end
     loop:add(client)
 
     local last_state = uptime()
