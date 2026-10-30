@@ -1,6 +1,6 @@
 local M = {}
 
-M.VERSION = "1.2.2"
+M.VERSION = "1.2.3"
 
 local TOPIC_KEYS = {
   "charge",

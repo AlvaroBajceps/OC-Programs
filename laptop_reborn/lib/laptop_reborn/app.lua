@@ -268,10 +268,20 @@ function M.run_mqtt_session(cfg, session, deps)
         if connack.rc ~= 0 then
           session.connected = false
           session.link = "FAULT"
+          local reason = tostring(connack.rc)
+          local ok, text = pcall(function()
+            return connack:reason_string()
+          end)
+          if ok and text ~= nil then
+            reason = reason .. " " .. tostring(text)
+          end
+          session.last_error = "CONNACK " .. reason
+          log("mqtt connect refused: " .. session.last_error)
           return
         end
         session.connected = true
         session.link = "ONLINE"
+        session.last_error = nil
         session.ack_pending_since = uptime()
         session.reconnect_at = nil
         pcall(ha.publish_availability, client, cfg, true)
@@ -284,20 +294,27 @@ function M.run_mqtt_session(cfg, session, deps)
       message = function(message)
         client:acknowledge(message)
       end,
-      close = function()
+      close = function(conn)
         session.connected = false
         session.ack_pending_since = nil
         session.reconnect_at = uptime()
         if session.link ~= "FAULT" then
           session.link = "RETRY"
         end
+        local reason = conn and conn.close_reason and tostring(conn.close_reason) or nil
+        if reason ~= nil and reason ~= "" then
+          session.last_error = "closed: " .. reason
+          log("mqtt link down: " .. reason)
+        end
         pcall(ha.publish_link, client, cfg, session.view, false)
       end,
-      error = function()
+      error = function(err)
         session.connected = false
         session.ack_pending_since = nil
-        session.link = "FAULT"
+        session.link = "RETRY"
         session.reconnect_at = uptime()
+        session.last_error = tostring(err)
+        log("mqtt error: " .. session.last_error)
       end,
     })
 
@@ -526,6 +543,7 @@ function M.run(cfg, deps)
     stop = false,
     connected = false,
     link = "OFF",
+    last_error = nil,
   }
 
   local now = deps.now or function()
@@ -752,6 +770,7 @@ function M.run(cfg, deps)
       poll()
       if session.view ~= nil then
         session.view.link = session.link
+        session.view.mqtt_error = session.last_error
         session.view.redstone_enabled = redstone_enabled
       end
 

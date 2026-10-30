@@ -710,6 +710,7 @@ local function draw_status(ui, r, view, history)
   local rs_text = view.redstone_enabled and "RS ON" or "RS OFF"
   local rs_color = view.redstone_enabled and p.ok or p.dim
   local status_text = tostring(view.status_text or "")
+  local mqtt_error = tostring(view.mqtt_error or "")
 
   if ih == 1 then
     local text
@@ -743,6 +744,10 @@ local function draw_status(ui, r, view, history)
   end
   if row < ih then
     line(ui, ix, iy + row, iw, "LINK " .. link, link_color(p, link), p.panel_hi)
+    row = row + 1
+  end
+  if row < ih and mqtt_error ~= "" then
+    line(ui, ix, iy + row, iw, "MQTT " .. mqtt_error, p.bad, p.panel_hi)
     row = row + 1
   end
   if row < ih then
@@ -975,7 +980,7 @@ function M.new(display, opts)
     display = display,
     p = opts.palette or theme.PALETTES.dark,
     icons = opts.show_icons ~= false,
-    version = tostring(opts.version or "1.2.2"),
+    version = tostring(opts.version or "1.2.3"),
     w = 0,
     h = 0,
     regions = {},
