@@ -23,7 +23,7 @@ Home Assistant over MQTT.
   automatically without restarting the program or the computer.
 
 Package: `laptop_reborn` in the `OC-Programs` OPPM repository. Current version
-**1.2.3**.
+**1.2.4**.
 
 ## Screens
 
@@ -47,7 +47,7 @@ Q quit R refresh T redstone  RS ON
 Full, 80×25 (`-x max` or `-x auto` on a tier-2 screen):
 
 ```text
-  LAPTOP REBORN v1.2.3                                           CHARGING  80x25
+  LAPTOP REBORN v1.2.4                                           CHARGING  80x25
 ┌─────────────────────────┐┌────────────────────────────┐┌─────────────────────┐
 │        BATTERY       85%││POWER FLOW                  ││  CHARGING           │
 │                         ││  IN 98.3 kEU/t             ││MAINT OK             │
@@ -259,6 +259,11 @@ gtnh/laptop/<node>/availability       retained "online" / "offline"
 homeassistant/<component>/<node>_<key>/config   retained discovery
 ```
 
+The MQTT client ID is `<node>_laptop` (for example `oc_abcdef12_laptop`), not
+just `<node>`. This keeps the laptop session distinct from `mqtt_ha` and
+`anchor_ctl` when they share an OpenOS Lua state, and the client is detached
+from luamqtt's shared default ioloop before the private session loop takes over.
+
 `<key>` is one of `charge`, `stored`, `capacity`, `power_in`, `power_out`,
 `power_net`, `edge_time`, `status`, `maintenance`, `lapotron_online`, `link`.
 Attribute topics are also published for `charge` and `stored` next to the three
@@ -398,7 +403,7 @@ theme, layout, display, ui, HA, and mqtt_boot specs.
 | Symptom | Likely cause |
 |---|---|
 | `no supported capacitor/energy storage` | No component exposes either the 24-line sensor API or the direct EU getters. Check the Adapter/cable, or set `DEV_LAPOTRON` to the component address. Run `laptop_reborn --diag` to see what the program can enumerate. |
-| Old `no component API` error persists after `oppm update` | The installed build is stale or an old module was cached in the current shell. `laptop_reborn --version` must report **1.2.3**; if it does not, push/pull the OPPM repo and update again. v1.2.0+ clears its own module cache at startup; reboot once if the old `bin` is still loaded. |
+| Old `no component API` error persists after `oppm update` | The installed build is stale or an old module was cached in the current shell. `laptop_reborn --version` must report **1.2.4**; if it does not, push/pull the OPPM repo and update again. v1.2.0+ clears its own module cache at startup; reboot once if the old `bin` is still loaded. |
 | `luamqtt unavailable` / `module 'mqtt' not found` | Internet Card missing, `raw.githubusercontent.com` blocked, or `/lib/mqtt` not writable. The supervisor retries every `MQTT_RETRY` seconds; it never exits. |
 | `LINK OFF` / `LINK DISABLED` / `LINK FAULT` | `LINK DISABLED` means MQTT is off (`ENABLE_MQTT = false` or `-M`). `LINK OFF` while MQTT is enabled means the MQTT thread could not start or the luamqtt bootstrap is still running. `LINK FAULT` means the broker refused the connection (CONNACK); a transient network/Internet Card error shows `LINK RETRY` instead. The status column now shows the last `MQTT ...` error, and the shell logs it; a stalled download gives up after `MQTT_DOWNLOAD_TIMEOUT`. |
 | Broker unreachable / `CONNACK` failure | OC filter still denies `172.16.69.4`, Mosquitto listens only on loopback, or the credentials are wrong. The UI keeps running and the link shows `RETRY`/`FAULT`; the session retries until it succeeds. |

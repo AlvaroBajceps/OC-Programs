@@ -1,6 +1,6 @@
 local M = {}
 
-M.VERSION = "1.2.3"
+M.VERSION = "1.2.4"
 
 local TOPIC_KEYS = {
   "charge",
@@ -40,6 +40,7 @@ local function make_defaults(address)
   return {
     VERSION = M.VERSION,
     node = node,
+    client_id = node .. "_laptop",
     base_topic = base_topic,
     availability = base_topic .. "/availability",
     discovery_prefix = "homeassistant",
