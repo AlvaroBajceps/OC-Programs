@@ -119,6 +119,68 @@ function M.trunc(s, w)
 end
 
 ---@param s string|nil
+---@param width number
+---@param max_lines number|nil
+---@return table
+function M.wrap(s, width, max_lines)
+  s = s and tostring(s) or ""
+  width = tonumber(width) or 0
+  max_lines = tonumber(max_lines)
+  if max_lines == nil then
+    max_lines = math.huge
+  else
+    max_lines = math.floor(max_lines)
+  end
+  if width < 1 or s == "" or max_lines < 1 then
+    return {}
+  end
+
+  local lines = {}
+  local current = ""
+  local function flush()
+    if current ~= "" then
+      lines[#lines + 1] = current
+      current = ""
+    end
+  end
+
+  for word in s:gmatch("%S+") do
+    while M.width(word) > width do
+      flush()
+      local head = take_codepoints(word, width)
+      lines[#lines + 1] = head
+      word = word:sub(#head + 1)
+    end
+    if word ~= "" then
+      if current == "" then
+        current = word
+      elseif M.width(current) + 1 + M.width(word) <= width then
+        current = current .. " " .. word
+      else
+        flush()
+        current = word
+      end
+    end
+  end
+  flush()
+
+  if #lines <= max_lines then
+    return lines
+  end
+
+  local kept = {}
+  for index = 1, max_lines - 1 do
+    kept[index] = lines[index]
+  end
+  local tail = lines[max_lines]
+  for index = max_lines + 1, #lines do
+    tail = tail .. " " .. lines[index]
+  end
+  kept[max_lines] = M.trunc(tail, width)
+  return kept
+end
+
+---@param s string|nil
 ---@param w number
 ---@return string
 function M.pad(s, w)

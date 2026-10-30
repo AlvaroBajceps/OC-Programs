@@ -6,17 +6,18 @@ local methods = require("laptop_reborn.methods")
 
 local M = {}
 
-local DIFF_FIELDS = {
-  { key = "charge", field = "percent" },
-  { key = "stored", field = "stored" },
-  { key = "capacity", field = "capacity_total" },
-  { key = "power_in", field = "in_5s" },
-  { key = "power_out", field = "out_5s" },
-  { key = "power_net", field = "net_instant" },
-  { key = "edge_time", field = "seconds_to_edge" },
-  { key = "status", field = "status_text" },
-  { key = "maintenance", field = "maintenance" },
-  { key = "lapotron_online", field = "online" },
+local DIFF_KEYS = {
+  "charge",
+  "stored",
+  "capacity",
+  "power_in",
+  "power_out",
+  "power_net",
+  "edge_time",
+  "status",
+  "maintenance",
+  "lapotron_online",
+  "link",
 }
 
 local function shallow_copy(source)
@@ -129,8 +130,7 @@ end
 
 local function resolve_model(deps)
   local model_module = deps.model or require("laptop_reborn.model")
-  local instance = model_module.new({ kf_factory = deps.kf_factory })
-  return model_module, instance
+  return model_module, model_module.new()
 end
 
 local function resolve_component(deps)
@@ -160,6 +160,23 @@ local function read_uptime(computer)
     end
   end
   return 0
+end
+
+---Compares the quantized MQTT payload of every entity key between two views,
+---so sub-quantum drift does not queue a publish.
+---@param previous table|nil
+---@param view table|nil
+---@param ha_module table|nil
+---@return table dirty set keyed by entity key
+function M.dirty_keys(previous, view, ha_module)
+  local ha = ha_module or require("laptop_reborn.ha")
+  local dirty = {}
+  for _, key in ipairs(DIFF_KEYS) do
+    if previous == nil or ha.state_payload(key, previous) ~= ha.state_payload(key, view) then
+      dirty[key] = true
+    end
+  end
+  return dirty
 end
 
 ---@param cfg table
@@ -323,6 +340,7 @@ end
 function M.run(cfg, deps)
   deps = deps or {}
 
+  local ha = deps.ha or require("laptop_reborn.ha")
   local io_module = deps.io or io
   local function say(text)
     pcall(io_module.write, tostring(text) .. "\n")
@@ -386,7 +404,7 @@ function M.run(cfg, deps)
     last_poll = at
     local ok, status = pcall(reader.pull, reader, true)
     if ok and status == 0 then
-      session.view = model_module.update(model, reader.cache, model.provider)
+      session.view = model_module.update(model, reader.cache)
     else
       session.view = model.record_offline(model)
     end
@@ -500,10 +518,9 @@ function M.run(cfg, deps)
   local previous = nil
   local function queue_changes()
     if cfg.ENABLE_MQTT and session.connected and session.view ~= nil then
-      for _, entry in ipairs(DIFF_FIELDS) do
-        if previous == nil or previous[entry.field] ~= session.view[entry.field] then
-          session.pending[entry.key] = true
-        end
+      local dirty = M.dirty_keys(previous, session.view, ha)
+      for key in pairs(dirty) do
+        session.pending[key] = true
       end
     end
     previous = shallow_copy(session.view)

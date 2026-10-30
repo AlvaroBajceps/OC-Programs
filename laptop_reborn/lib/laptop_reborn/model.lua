@@ -4,8 +4,8 @@ local M = {}
 
 local DEFAULT_RING_SIZE = 96
 local FILL_THRESHOLD = 8
-local FILTER_MULTIPLIER = 20
-local ZERO_EPSILON = 1e-9
+local HYSTERESIS_THRESHOLD = 16
+local TICKS_PER_SECOND = 20
 local MAX_EDGE_SECONDS = 999 * 86400
 
 local function as_number(value)
@@ -15,40 +15,17 @@ local function as_number(value)
   return value
 end
 
-local function make_provider(factory)
-  local created = factory()
-  if type(created) == "function" then
-    return created
-  end
-  if type(created) == "table" and type(created.update) == "function" then
-    return function(raw)
-      return created:update(raw)
-    end
-  end
-  return function(raw)
-    return raw
-  end
-end
-
 ---@param opts table|nil
 ---@return table
 function M.new(opts)
   opts = opts or {}
-  local factory = opts.kf_factory
-  if factory == nil then
-    factory = function()
-      local KalmanFilter = require("ab_kalman")
-      return KalmanFilter.new(1, 1000, 0)
-    end
-  end
-
   return {
     ring_size = opts.ring_size or DEFAULT_RING_SIZE,
     buffer = {},
     head = 1,
     count = 0,
     seq = 0,
-    provider = make_provider(factory),
+    status_state = nil,
   }
 end
 
@@ -64,7 +41,83 @@ local function push(model, sample)
   end
 end
 
-local function build_view(model, cache, provider)
+-- Hysteresis: an 8 EU/t dead band keeps the current mode, a 16 EU/t band must
+-- be crossed to leave Idle/Full/Empty, so sensor noise cannot flap the state.
+---@param model table
+---@param view table
+---@return string
+local function derive_status(model, view)
+  if not view.online then
+    return "Offline"
+  end
+  if view.maintenance == true then
+    return "Maintenance"
+  end
+  local percent = view.percent
+  if type(percent) == "number" then
+    if percent <= 0.05 then
+      return "Empty"
+    end
+    if percent >= 99.95 and (view.net_instant == nil or view.net_instant >= -FILL_THRESHOLD) then
+      return "Full"
+    end
+  end
+
+  local net = view.net_instant
+  if net == nil then
+    local previous = model.status_state
+    if previous == "Charging" or previous == "Discharging" or previous == "Idle" then
+      return previous
+    end
+    return "Idle"
+  end
+
+  local previous = model.status_state
+  if previous == "Charging" then
+    if net < -FILL_THRESHOLD then
+      return "Discharging"
+    elseif net < FILL_THRESHOLD then
+      return "Idle"
+    end
+    return "Charging"
+  elseif previous == "Discharging" then
+    if net > FILL_THRESHOLD then
+      return "Charging"
+    elseif net > -FILL_THRESHOLD then
+      return "Idle"
+    end
+    return "Discharging"
+  end
+  if net > HYSTERESIS_THRESHOLD then
+    return "Charging"
+  elseif net < -HYSTERESIS_THRESHOLD then
+    return "Discharging"
+  end
+  return "Idle"
+end
+
+-- The 5 m GT average is stable and closer to GT's own estimate; the instant
+-- net only decides direction. Rates are EU/t and must be scaled by the tick
+-- rate to get EU/s for the time-to-edge division.
+---@param view table
+---@return number
+local function compute_edge(view)
+  local net = view.net_instant
+  if net == nil then
+    return 0
+  end
+  local rate
+  if net > FILL_THRESHOLD and view.stored ~= nil and view.capacity_total ~= nil then
+    rate = (view.net_5m ~= nil and view.net_5m > FILL_THRESHOLD) and view.net_5m or net
+    return (view.capacity_total - view.stored) / (rate * TICKS_PER_SECOND)
+  elseif net < -FILL_THRESHOLD and view.stored ~= nil then
+    rate = (view.net_5m ~= nil and view.net_5m < -FILL_THRESHOLD) and view.net_5m or net
+    return view.stored / (rate * TICKS_PER_SECOND)
+  end
+  return 0
+end
+
+local function build_view(model, cache)
   model.seq = model.seq + 1
 
   local view = {
@@ -80,10 +133,12 @@ local function build_view(model, cache, provider)
     out_5m = nil,
     out_1h = nil,
     net_instant = nil,
-    net_kf = nil,
+    net_5m = nil,
+    net_1h = nil,
     seconds_to_edge = 0,
     edge_text = "unknown",
     maintenance = nil,
+    status = "Offline",
     status_text = "",
     redstone_enabled = false,
     link = "OFF",
@@ -115,27 +170,17 @@ local function build_view(model, cache, provider)
   if view.in_5s ~= nil and view.out_5s ~= nil then
     view.net_instant = view.in_5s - view.out_5s
   end
-
-  if view.net_instant ~= nil then
-    local filtered = view.net_instant
-    local active_provider = provider or model.provider
-    if active_provider ~= nil then
-      local ok, result = pcall(active_provider, view.net_instant)
-      if ok and type(result) == "number" and result == result then
-        filtered = result
-      end
-    end
-    view.net_kf = filtered * FILTER_MULTIPLIER
+  if view.in_5m ~= nil and view.out_5m ~= nil then
+    view.net_5m = view.in_5m - view.out_5m
+  end
+  if view.in_1h ~= nil and view.out_1h ~= nil then
+    view.net_1h = view.in_1h - view.out_1h
   end
 
-  local edge = 0
-  if view.net_instant ~= nil and view.net_kf ~= nil and math.abs(view.net_kf) >= ZERO_EPSILON then
-    if view.net_instant > FILL_THRESHOLD and view.stored ~= nil and view.capacity_total ~= nil then
-      edge = (view.capacity_total - view.stored) / view.net_kf
-    elseif view.net_instant < -FILL_THRESHOLD and view.stored ~= nil then
-      edge = view.stored / view.net_kf
-    end
-  end
+  view.status = derive_status(model, view)
+  model.status_state = view.status
+
+  local edge = compute_edge(view)
   if edge ~= edge then
     edge = 0
   elseif edge > MAX_EDGE_SECONDS then
@@ -157,16 +202,15 @@ end
 
 ---@param model table
 ---@param cache table|nil
----@param provider function|nil
 ---@return table
-function M.update(model, cache, provider)
-  return build_view(model, cache, provider)
+function M.update(model, cache)
+  return build_view(model, cache)
 end
 
 ---@param model table
 ---@return table
 function M.record_offline(model)
-  return build_view(model, nil, nil)
+  return build_view(model, nil)
 end
 
 ---@param model table

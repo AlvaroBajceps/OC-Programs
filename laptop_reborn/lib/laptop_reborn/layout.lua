@@ -79,13 +79,13 @@ end
 function M.class(w, h)
   w = int(w, 0)
   h = int(h, 0)
-  if w <= 44 or h <= 16 then
-    return "compact"
-  end
-  if w >= 70 and h >= 22 then
+  if w >= 66 and h >= 23 then
     return "full"
   end
-  return "medium"
+  if w > 44 and h > 16 then
+    return "medium"
+  end
+  return "compact"
 end
 
 local function micro(screen_w, screen_h)
@@ -100,14 +100,14 @@ local function micro(screen_w, screen_h)
 end
 
 local function compact(screen_w, screen_h)
-  local body_h = screen_h - 4
+  local body_h = math.max(1, screen_h - 4)
   local left_w = math.max(1, math.floor(screen_w * 0.45))
   if left_w > screen_w - 1 then
     left_w = screen_w - 1
   end
   local right_w = screen_w - left_w
   local battery_h = math.max(1, math.min(body_h - 1, math.ceil(body_h * 0.6)))
-  local gauge_h = body_h - battery_h
+  local gauge_h = math.max(1, body_h - battery_h)
   local strip_w = math.max(1, math.floor(screen_w / 2))
   if strip_w > screen_w - 1 then
     strip_w = screen_w - 1
@@ -125,55 +125,67 @@ local function compact(screen_w, screen_h)
 end
 
 local function medium(screen_w, screen_h)
-  local body_h = screen_h - 2
+  local body_h = math.max(4, screen_h - 2)
   local left_w = math.floor(screen_w * 0.42)
   if left_w < 8 then
     left_w = math.floor(screen_w / 2)
   end
   left_w = math.max(1, math.min(screen_w - 1, left_w))
   local right_w = screen_w - left_w
-  local battery_h = math.max(3, math.floor(body_h * 0.45))
-  local gauge_h = math.max(2, math.floor(body_h * 0.25))
-  if battery_h + gauge_h >= body_h then
-    battery_h = math.max(1, body_h - gauge_h - 1)
+
+  local battery_h = math.max(1, math.floor(body_h * 0.5))
+  if battery_h >= body_h then
+    battery_h = body_h - 1
   end
-  local spark_h = body_h - battery_h - gauge_h
-  local power_h = math.max(3, math.floor(body_h * 0.55))
-  local edge_h = math.max(2, math.floor(body_h * 0.25))
-  if power_h + edge_h >= body_h then
-    power_h = math.max(1, body_h - edge_h - 1)
+  local gauge_h = body_h - battery_h
+
+  local power_h = math.max(7, math.floor(body_h * 0.44))
+  local edge_h = math.max(2, math.floor(body_h * 0.12))
+  local status_h = math.max(4, math.floor(body_h * 0.25))
+  local spark_h = body_h - power_h - edge_h - status_h
+  if spark_h < 3 then
+    local deficit = 3 - spark_h
+    local take = math.min(deficit, math.max(0, status_h - 4))
+    status_h = status_h - take
+    deficit = deficit - take
+    take = math.min(deficit, math.max(0, edge_h - 1))
+    edge_h = edge_h - take
+    deficit = deficit - take
+    power_h = math.max(1, power_h - deficit)
+    spark_h = body_h - power_h - edge_h - status_h
   end
-  local status_h = body_h - power_h - edge_h
+
   return {
     header = rect(1, 1, screen_w, 1, screen_w, screen_h),
     battery = rect(1, 2, left_w, battery_h, screen_w, screen_h),
     gauge = rect(1, 2 + battery_h, left_w, gauge_h, screen_w, screen_h),
-    spark = rect(1, 2 + battery_h + gauge_h, left_w, spark_h, screen_w, screen_h),
     power = rect(1 + left_w, 2, right_w, power_h, screen_w, screen_h),
     edge = rect(1 + left_w, 2 + power_h, right_w, edge_h, screen_w, screen_h),
     status = rect(1 + left_w, 2 + power_h + edge_h, right_w, status_h, screen_w, screen_h),
+    spark = rect(1 + left_w, 2 + power_h + edge_h + status_h, right_w, spark_h, screen_w, screen_h),
     footer = rect(1, screen_h, screen_w, 1, screen_w, screen_h),
   }
 end
 
 local function full(screen_w, screen_h)
-  local body_h = screen_h - 2
-  local left_w = math.max(1, math.floor(screen_w * 0.33))
-  local mid_w = math.max(1, math.floor(screen_w * 0.34))
+  local body_h = math.max(4, screen_h - 2)
+  local left_w = math.max(1, math.floor(screen_w * 0.34))
+  local mid_w = math.max(1, math.ceil(screen_w * 0.37))
   local right_w = screen_w - left_w - mid_w
   if right_w < 1 then
     right_w = 1
     mid_w = math.max(1, screen_w - left_w - 1)
   end
-  local battery_h = math.max(3, math.floor(body_h * 0.42))
-  local gauge_h = body_h - battery_h
-  local power_h = math.max(3, math.floor(body_h * 0.55))
-  local edge_h = math.max(2, math.floor(body_h * 0.2))
-  local spark_h = body_h - power_h - edge_h
-  if spark_h < 1 then
-    edge_h = math.max(1, body_h - power_h - 1)
-    spark_h = body_h - power_h - edge_h
+
+  local battery_h = math.max(7, math.floor(body_h * 0.35))
+  if battery_h >= body_h then
+    battery_h = body_h - 1
   end
+  local gauge_h = body_h - battery_h
+  local edge_h = 5
+  local power_h = math.max(9, math.min(10, body_h - 12))
+  local spark_h = body_h - power_h - edge_h
+
   return {
     header = rect(1, 1, screen_w, 1, screen_w, screen_h),
     battery = rect(1, 2, left_w, battery_h, screen_w, screen_h),

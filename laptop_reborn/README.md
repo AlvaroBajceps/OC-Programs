@@ -6,8 +6,11 @@ text-mode `laptop` program with a coloured, double-buffered panel, keeps the
 original redstone telegraph byte-for-byte, and publishes the same telemetry to
 Home Assistant over MQTT.
 
-- **Local UI** — battery gauge, in/out/net power, time to full/empty, GT energy
-  status, maintenance flag, lapotron online state, sparkline history.
+- **Local UI** — single battery panel with percent, bar, stored/capacity,
+  passive loss and distance to full or empty; auto-scaled charge trend; power
+  flow with comparative bars and a signed NET; corrected time-to-edge panel;
+  auto-ranged power history; status column with the raw GT sensor text and a
+  window summary.
 - **Redstone mirror** — battery bars on `east`, load+ on `up`, load- on `west`,
   refreshed every 0.4 s, with the old blink/pulse math preserved.
 - **MQTT + Home Assistant** — eleven discovery entities plus an availability
@@ -16,75 +19,96 @@ Home Assistant over MQTT.
 - **Resilient runtime** — MQTT lives in its own OpenOS thread, so a broker
   outage or a slow luamqtt download never freezes the UI.
 
-Package: `laptop_reborn` in the `OC-Programs` OPPM repository.
+Package: `laptop_reborn` in the `OC-Programs` OPPM repository. Current version
+**1.2.0**.
 
 ## Screens
 
 Compact, 34×12 (`-x 1x`):
 
 ```text
-  LAPTOP REBORN       ONLINE 34x12
+  LAPTOP REBORN    CHARGING  34x12
 ┌─────────────┐┌─────────────────┐
-│  BATTERY    ││POWER FLOW       │
-│  61%        ││  IN 119.6 kEU/t │
-│  11.8G/19.4G││  OUT 117.0 kEU/t│
-└─────────────┘│  NET 2.6 kEU/t  │
-┌─────────────┐│AVG 5m           │
-│             ││  IN 120.2 kEU/t │
+│BATTERY   85%││POWER FLOW       │
+│             ││  IN 98.3 kEU/t  │
+│21.1/24.8 GEU││  OUT 57.7 kEU/t │
+└─────────────┘│NET   +40.6 kEU/t│
+┌─────────────┐│─────────────────│
+│TREND   +0.3%││5m    +38.0 kEU/t│
 └─────────────┘└─────────────────┘
-Filled in 1.76d  MAINT OK LAP ON
-HIST
+Filled in 1h 22m│ MAINT OK LAP ON 
+POWER HISTORY   25.3 .. 50.0 kEU/t
 Q quit R refresh T redstone  RS ON
 ```
 
 Full, 80×25 (`-x max` or `-x auto` on a tier-2 screen):
 
 ```text
-  LAPTOP REBORN v1.1.0                                              ONLINE 80x25
-┌────────────────────────┐┌─────────────────────────┐┌─────────────────────────┐
-│        BATTERY         ││POWER FLOW               ││        MAINT OK         │
-│        61%             ││  IN 119.6 kEU/t         ││        LAPOTRON ONLINE  │
-│        11.78/19.44 GEU ││  OUT 117.0 kEU/t        ││          RS ON          │
-│        CAP 19.44 GEU   ││  NET 2.6 kEU/t          ││        Running normally │
-│        LOSS 112.0 EU/t ││AVG 5m                   ││        LINK ONLINE      │
-│                        ││  IN 120.2 kEU/t         ││        CAP 19.44 GEU    │
-│                        ││  OUT 112.4 kEU/t        ││        PANEL v1.1.0     │
-└────────────────────────┘│AVG 1h                   ││        SCALE 80x25      │
-┌────────────────────────┐│  IN 120.2 kEU/t         ││                         │
-│CHARGE         61%      ││  OUT 112.4 kEU/t        ││                         │
-│                        │└─────────────────────────┘│                         │
-│                        │┌─────────────────────────┐│                         │
-│11.78/19.44 GEU         ││EDGE TIME                ││                         │
-│LOSS 112.0 EU/t         ││Filled in 1.76d          ││                         │
-│CHARGE HISTORY          │└─────────────────────────┘│                         │
-│                        │┌─────────────────────────┐│                         │
-│                        ││POWER HISTORY            ││                         │
-│                        ││                         ││                         │
-│                        ││                         ││                         │
-│                        ││                         ││                         │
-│                        ││                         ││                         │
-└────────────────────────┘└─────────────────────────┘└─────────────────────────┘
-Q quit R refresh T redstone                                    LINK ONLINE RS ON
+  LAPTOP REBORN v1.2.0                                           CHARGING  80x25
+┌─────────────────────────┐┌────────────────────────────┐┌─────────────────────┐
+│        BATTERY       85%││POWER FLOW                  ││  CHARGING           │
+│                         ││  IN 98.3 kEU/t             ││MAINT OK             │
+│        21.09/24.84 GEU  ││  OUT 57.7 kEU/t            ││LAPOTRON ONLINE      │
+│        LOSS 143.0 EU/t  ││ NET            +40.6 kEU/t ││LINK ONLINE          │
+│        3.75 GEU to full ││────────────────────────────││  RS ON              │
+│                         ││AVG 5m           +38.0 kEU/t││─────────────────────│
+└─────────────────────────┘│AVG 1h           +27.1 kEU/t││GT SENSOR            │
+┌─────────────────────────┐│                            ││Time to Full         │
+│CHARGE TREND        +0.3%│└────────────────────────────┘│1.45 hours           │
+│85.1%│                   │┌────────────────────────────┐│─────────────────────│
+│     │                   ││TIME TO EDGE                ││WINDOW 96s           │
+│     │                   ││Filled in 1h 22m            ││CHARGE 84.6 .. 84.9% │
+│     │                   ││at +38.0 kEU/t (5m)         ││NET 25 .. 50 kEU/t   │
+│     │                   │└────────────────────────────┘│                     │
+│     │                   │┌────────────────────────────┐│                     │
+│     │                   ││POWER HISTORY 25 .. 50 kEU/t││                     │
+│     │                   ││                            ││                     │
+│     │                   ││                            ││                     │
+│     │                   ││                            ││                     │
+│     │                   ││                            ││                     │
+│84.3%┴                   ││                            ││                     │
+└─────────────────────────┘└────────────────────────────┘└─────────────────────┘
+Q quit R refresh T redstone                                                RS ON
 ```
 
-The exact layout degrades through `compact` / `medium` / `full` classes; it
-never overlaps or draws outside the screen.
+Both dumps are text only: colours, LEDs, filled bars, and the battery sprite
+are omitted. The 80×25 layout draws the battery sprite only when the panel has
+room; 68×24 is text-only, so its panels never truncate to make space for a
+sprite. Other sizes fall back through the `full` / `medium` / `compact` layout
+classes: 50×18 keeps the medium two-column arrangement, and 30×10 keeps the
+compact header, battery, power, and status rows. A class drops rows rather than
+overlapping or drawing outside the screen.
 
 ## Features and icons
 
 | Element | Icon | Source |
 |---|---|---|
-| Battery panel | battery sprite | `theme.COMPILED.battery` |
-| Gauge flow direction | arrow_up / arrow_down / transfer sprite | `theme.COMPILED` |
-| Edge time | clock sprite when it fits, LED fallback | `theme.COMPILED.clock` |
-| Maintenance | wrench / warning sprite | `theme.COMPILED` |
-| Power in / out / net | coloured status LEDs + text | palette |
-| Header / footer | coloured link LED, rails, RS badge | palette |
-| Sparklines | coloured cell bars (no glyphs) | `display.spark` |
+| Battery panel | battery sprite when the panel has room | `theme.COMPILED.battery` |
+| Power flow | coloured LEDs, value text, comparative bars | palette |
+| Signed NET | colour by sign, `+` prefix when charging | palette |
+| Charge trend | auto-scaled filled column chart | palette |
+| Power history | auto-ranged column chart; `display.spark` on short panels | palette + `display.spark` |
+| Header / footer | mode pill, link LED, rails, RS badge | palette |
 
-Sprites are compiled once at module load; each is at most 7×7 cells so the
-compact layout still has room for text. A sprite is only drawn when its panel
-is tall enough; otherwise the same information is shown with a coloured LED.
+Sprites are compiled once at module load and never push panel text out of its
+rect. Only the battery sprite is drawn, and only on a panel large enough to
+hold it (80×25); smaller classes show the same information as text, bars, and
+LEDs.
+
+## Power and edge math
+
+`NET` is the true instantaneous `power_in − power_out` in EU/t: the 5 s GT
+averages subtracted, with no unit conversion. Older builds multiplied a filtered
+net by 20 to convert EU/t to EU/s and then displayed the result as EU/t, so a
+real 40.6 kEU/t read as 562.8 kEU/t. The 20 ticks/s factor now appears only
+inside the time-to-edge division.
+
+Time to edge divides the remaining energy (capacity minus stored when charging,
+stored when discharging) by a rate in EU/s. The rate is the 5 m average net when
+it points the same way as the instantaneous net; otherwise it uses the
+instantaneous net. The Kalman filter is gone from this program: `ab_lapotron`
+is the only sensor dependency, and the 5 m / 1 h averages come straight from
+the GT sensor lines.
 
 ## Install
 
@@ -102,8 +126,8 @@ This installs:
 | `rc.d/laptop_reborn.lua` | `/etc/rc.d/laptop_reborn.lua` |
 | `lib/laptop_reborn/*.lua` | `/lib/laptop_reborn/` |
 
-Dependencies `ab_lapotron` and `ab_kalman` are installed automatically. Start
-it manually:
+Dependency `ab_lapotron` is installed automatically. It is the only package
+dependency since 1.2.0; `ab_kalman` was removed. Start it manually:
 
 ```text
 laptop_reborn
@@ -173,24 +197,55 @@ alphanumeric characters of the computer address.
 
 | Entity | Component | Topic suffix | Notes |
 |---|---|---|---|
-| Charge | sensor | `charge/state` | `%`, device class battery |
-| Stored Energy | sensor | `stored/state` | EU, total |
+| Charge | sensor | `charge/state` | `%`, device class battery, attribute `capacity_total` |
+| Stored Energy | sensor | `stored/state` | EU, state class total, attribute `capacity_total` |
 | Total Capacity | sensor | `capacity/state` | EU, diagnostic |
 | Power In | sensor | `power_in/state` | EU/t |
 | Power Out | sensor | `power_out/state` | EU/t |
-| Net Power | sensor | `power_net/state` | EU/t, attributes |
-| Time To Edge | sensor | `edge_time/state` | seconds, duration, attributes |
-| Energy Status | sensor | `status/state` | diagnostic, attributes |
+| Net Power | sensor | `power_net/state` | EU/t, attributes `in_5m`, `out_5m`, `in_1h`, `out_1h`, `net_5m`, `net_1h`, `passive_loss` |
+| Time To Edge | sensor | `edge_time/state` | seconds (`device_class: duration`), adaptive quantization, attributes `edge_text`, `percent` |
+| Energy Status | sensor | `status/state` | enum, diagnostic, attributes `maintenance`, `state`, `status_text`, `redstone_enabled`, `link` |
 | Maintenance | binary_sensor | `maintenance/state` | problem, diagnostic |
 | Lapotron Online | binary_sensor | `lapotron_online/state` | connectivity, diagnostic |
 | Broker Link | binary_sensor | `link/state` | connectivity, diagnostic |
 | Availability | — | `availability` | retained `online` / `offline` |
 
 Discovery payloads are retained QoS 1 and carry `unique_id`,
-`default_entity_id`, the shared `device` block, and `origin`. Attribute topics
-exist for `charge` / `stored` (total capacity), `power_net` (5 m/1 h averages,
-filtered net, passive loss), `edge_time` (edge text, percent), and `status`
-(maintenance, status text, redstone state, link).
+`default_entity_id`, the shared `device` block, and `origin`.
+
+`Energy Status` is a string enum (`device_class: enum`) with the options
+`Charging`, `Discharging`, `Idle`, `Full`, `Empty`, `Maintenance`, `Offline`,
+and `Unknown`. The program publishes the matching state; `Unknown` is the
+fallback when no valid mode is available. Attribute topics exist for `charge`
+and `stored` (both carry `capacity_total`), `power_net` (`in_5m`, `out_5m`,
+`in_1h`, `out_1h`, `net_5m`, `net_1h`, `passive_loss`), `edge_time`
+(`edge_text`, `percent`), and `status` (`maintenance`, `state`, `status_text`,
+`redstone_enabled`, `link`).
+
+### Home Assistant activity
+
+`Energy Status` changes only when the mode transitions, not on every poll. The
+raw GT sensor line (for example `Time to Full: 1.45 hours`) is no longer the
+entity state; it is published as `status_text` inside the `status` attributes,
+next to `state`, `maintenance`, `redstone_enabled`, and `link`. This keeps the
+Activity log free of one entry per second.
+
+Numeric states are quantized before publishing so retained entities do not flap:
+
+| Entity | Quantization |
+|---|---|
+| Charge | whole percent |
+| Stored Energy | 0.1% of total capacity |
+| Total Capacity | whole EU |
+| Power In / Out / Net | two significant digits |
+| Time To Edge | adaptive step: 300 s above 20 min, 60 s above 5 min, 15 s above 1 min, 5 s below 1 min |
+
+Attributes use the same quantization. The raw `edge_text` stays a string
+attribute.
+
+Publishing is triggered only when the quantized payload changes. `STATE_INTERVAL`
+(30 s) is a heartbeat that republishes identical values; those republications do
+not create new Home Assistant state changes.
 
 ## Topic scheme
 
@@ -203,8 +258,9 @@ homeassistant/<component>/<node>_<key>/config   retained discovery
 
 `<key>` is one of `charge`, `stored`, `capacity`, `power_in`, `power_out`,
 `power_net`, `edge_time`, `status`, `maintenance`, `lapotron_online`, `link`.
-The node also publishes an MQTT Last Will that marks availability `offline` if
-the computer loses power.
+Attribute topics are also published for `charge` and `stored` next to the three
+keys listed above. The node also publishes an MQTT Last Will that marks
+availability `offline` if the computer loses power.
 
 ## Configuration override
 
@@ -302,8 +358,8 @@ busted tests/laptop_reborn_redstone_spec.lua \
        tests/laptop_reborn_bin_spec.lua
 ```
 
-The full package suite also includes the config, format, model, theme, layout,
-display, HA, and mqtt_boot specs.
+The full package suite also includes the config, format, lapotron, model,
+theme, layout, display, ui, HA, and mqtt_boot specs.
 
 ## In-game verification checklist
 
@@ -311,15 +367,20 @@ display, HA, and mqtt_boot specs.
 2. `laptop_reborn -V` starts against the virtual lapotron and draws the panel.
 3. `laptop_reborn` with the real capacitor or supercapacitor shows charge,
    stored/total EU, in/out/net, edge time, and status.
-4. Press `T`: the redstone outputs drop to 0 and the footer badge changes.
-5. Press `T` again: the telegraph resumes on `east`/`up`/`west`.
-6. In HA, the device appears with eleven entities and `Broker Link = ON`.
-7. Unplug the Adapter: the panel shows offline and HA marks
-   `Lapotron Online = OFF` without crashing.
-8. Press `Q`: redstone returns to 0, availability becomes `offline`, the
-   original screen resolution is restored, and the shell returns.
-9. Start a second copy: it refuses with an "already running" message.
-10. Reboot with `rc laptop_reborn enable`: the dashboard starts before the
+4. NET equals IN − OUT. It is displayed in EU/t and is not multiplied by 20.
+5. Press `T`: the redstone outputs drop to 0 and the footer badge changes.
+6. Press `T` again: the telegraph resumes on `east`/`up`/`west`.
+7. In HA, the device appears with eleven entities and `Broker Link = ON`.
+8. `Energy Status` reads `Charging` (or the current mode), and the Activity log
+   does not gain a new entry every second.
+9. The `Energy Status` attributes show the raw GT text in `status_text`, for
+   example `Time to Full: 1.45 hours`.
+10. Unplug the Adapter: the panel shows offline and HA marks
+    `Lapotron Online = OFF` without crashing.
+11. Press `Q`: redstone returns to 0, availability becomes `offline`, the
+    original screen resolution is restored, and the shell returns.
+12. Start a second copy: it refuses with an "already running" message.
+13. Reboot with `rc laptop_reborn enable`: the dashboard starts before the
     shell and reconnects to the broker.
 
 ## Troubleshooting
@@ -327,7 +388,7 @@ display, HA, and mqtt_boot specs.
 | Symptom | Likely cause |
 |---|---|
 | `no supported capacitor/energy storage` | No component exposes either the 24-line sensor API or the direct EU getters. Check the Adapter/cable, or set `DEV_LAPOTRON` to the component address. Run `laptop_reborn --diag` to see what the program can enumerate. |
-| Old `no component API` error persists after `oppm update` | The installed build is stale or an old module was cached in the current shell. `laptop_reborn --version` must report **1.1.0**; if it does not, push/pull the OPPM repo and update again. v1.1.0 clears its own module cache at startup; reboot once if the old `bin` is still loaded. |
+| Old `no component API` error persists after `oppm update` | The installed build is stale or an old module was cached in the current shell. `laptop_reborn --version` must report **1.2.0**; if it does not, push/pull the OPPM repo and update again. v1.2.0 clears its own module cache at startup; reboot once if the old `bin` is still loaded. |
 | `luamqtt unavailable` / `module 'mqtt' not found` | Internet Card missing, `raw.githubusercontent.com` blocked, or `/lib/mqtt` not writable. The program retries every `MQTT_RETRY` seconds; it never exits. |
 | Broker unreachable / `CONNACK` failure | OC filter still denies `172.16.69.4`, Mosquitto listens only on loopback, or the credentials are wrong. The UI keeps running and the link shows `RETRY`/`FAULT`. |
 | Back-buffer / VRAM warning | The GPU cannot allocate a full-screen buffer. Lower the scale (`-x 1x`) or use a tier-2 GPU/screen. Without a buffer the display still draws directly. |

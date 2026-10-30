@@ -16,6 +16,27 @@ local STATE_ORDER = {
   "link",
 }
 
+local STATUS_VALUES = {
+  Charging = true,
+  Discharging = true,
+  Idle = true,
+  Full = true,
+  Empty = true,
+  Maintenance = true,
+  Offline = true,
+}
+
+local STATUS_OPTIONS = {
+  "Charging",
+  "Discharging",
+  "Idle",
+  "Full",
+  "Empty",
+  "Maintenance",
+  "Offline",
+  "Unknown",
+}
+
 local function json_escape(value)
   return (
     value:gsub('[%z\1-\31\\"]', function(char)
@@ -77,7 +98,7 @@ function M.json_encode(value)
   return "{" .. table.concat(items, ",") .. "}"
 end
 
-local function state_text(value, two_decimals)
+local function state_text(value)
   if value == nil then
     return "unknown"
   end
@@ -87,8 +108,6 @@ local function state_text(value, two_decimals)
   elseif kind == "number" then
     if value == math.floor(value) then
       return string.format("%d", value)
-    elseif two_decimals then
-      return string.format("%.2f", value)
     end
     return string.format("%.14g", value)
   end
@@ -101,6 +120,186 @@ end
 ---@return string
 function M.payload(value)
   return state_text(value)
+end
+
+-- Two-significant-digit step: 98300 -> 1000, 57.7 -> 1, 1.5 -> 0.1.
+---@param value any
+---@return number
+local function nice_step(value)
+  if type(value) ~= "number" or value == 0 or value ~= value or value == math.huge or value == -math.huge then
+    return 0
+  end
+  return 10 ^ (math.floor(math.log(math.abs(value), 10)) - 1)
+end
+
+---@param value any
+---@param step number
+---@return number|nil
+local function quantize(value, step)
+  if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
+    return nil
+  end
+  if step == nil or step <= 0 then
+    return value
+  end
+  return math.floor(value / step + 0.5) * step
+end
+
+---@param view table
+---@return number|nil
+local function quantized_percent(view)
+  return quantize(view.percent, 1)
+end
+
+---@param view table
+---@return number|nil
+local function quantized_capacity(view)
+  return quantize(view.capacity_total, 1)
+end
+
+---@param value any
+---@return number|nil
+local function quantized_power(value)
+  return quantize(value, nice_step(value))
+end
+
+-- Stored energy quantizes to a thousandth of the total capacity so the state
+-- moves in lockstep with the charge percentage; without a capacity it falls
+-- back to a two-significant-digit step of the value itself.
+---@param view table
+---@return number|nil
+local function quantized_stored(view)
+  local capacity = view.capacity_total
+  if type(capacity) == "number" and capacity == capacity and capacity > 0 and capacity ~= math.huge then
+    return quantize(view.stored, capacity / 1000)
+  end
+  return quantized_power(view.stored)
+end
+
+---@param value number
+---@return number
+local function edge_step(value)
+  local magnitude = math.abs(value)
+  if magnitude >= 1200 then
+    return 300
+  elseif magnitude >= 300 then
+    return 60
+  elseif magnitude >= 60 then
+    return 15
+  end
+  return 5
+end
+
+---@param view table
+---@return number|nil
+local function quantized_edge(view)
+  local value = view.seconds_to_edge
+  if type(value) ~= "number" then
+    return nil
+  end
+  return quantize(value, edge_step(value))
+end
+
+---@param view table
+---@return string
+local function status_state(view)
+  if type(view.status) == "string" and STATUS_VALUES[view.status] then
+    return view.status
+  end
+  return "Unknown"
+end
+
+---@param key string
+---@param view table
+---@return string payload
+local function state_value(key, view)
+  if key == "charge" then
+    return state_text(quantized_percent(view))
+  elseif key == "stored" then
+    return state_text(quantized_stored(view))
+  elseif key == "capacity" then
+    return state_text(quantized_capacity(view))
+  elseif key == "power_in" then
+    return state_text(quantized_power(view.in_5s))
+  elseif key == "power_out" then
+    return state_text(quantized_power(view.out_5s))
+  elseif key == "power_net" then
+    return state_text(quantized_power(view.net_instant))
+  elseif key == "edge_time" then
+    return state_text(quantized_edge(view))
+  elseif key == "status" then
+    return status_state(view)
+  elseif key == "maintenance" then
+    return state_text(view.maintenance)
+  elseif key == "lapotron_online" then
+    return state_text(view.online)
+  elseif key == "link" then
+    return view.link == "ONLINE" and "ON" or "OFF"
+  end
+  return "unknown"
+end
+
+---Returns exactly the payload that key would publish for view. app.lua diffs
+---these strings so change detection and publishing agree byte-for-byte.
+---@param key string
+---@param view table|nil
+---@return string
+function M.state_payload(key, view)
+  return state_value(key, view or {})
+end
+
+---@param view table
+---@return table attributes
+local function charge_attributes(view)
+  return { capacity_total = quantized_capacity(view) }
+end
+
+---@param view table
+---@return table attributes
+local function power_net_attributes(view)
+  return {
+    in_5m = quantized_power(view.in_5m),
+    out_5m = quantized_power(view.out_5m),
+    in_1h = quantized_power(view.in_1h),
+    out_1h = quantized_power(view.out_1h),
+    net_5m = quantized_power(view.net_5m),
+    net_1h = quantized_power(view.net_1h),
+    passive_loss = quantized_power(view.passive_loss),
+  }
+end
+
+---@param view table
+---@return table attributes
+local function edge_time_attributes(view)
+  return { edge_text = view.edge_text, percent = quantized_percent(view) }
+end
+
+---@param view table
+---@return table attributes
+local function status_attributes(view)
+  return {
+    maintenance = view.maintenance,
+    state = status_state(view),
+    status_text = view.status_text,
+    redstone_enabled = view.redstone_enabled,
+    link = view.link,
+  }
+end
+
+---@param key string
+---@param view table
+---@return table|nil attributes
+local function attributes_for(key, view)
+  if key == "charge" or key == "stored" then
+    return charge_attributes(view)
+  elseif key == "power_net" then
+    return power_net_attributes(view)
+  elseif key == "edge_time" then
+    return edge_time_attributes(view)
+  elseif key == "status" then
+    return status_attributes(view)
+  end
+  return nil
 end
 
 ---@param cfg table
@@ -225,8 +424,10 @@ function M.discovery_entries(cfg)
     }),
     sensor_entry(cfg, "status", {
       name = "Energy Status",
-      icon = "mdi:information-outline",
+      device_class = "enum",
+      options = STATUS_OPTIONS,
       entity_category = "diagnostic",
+      icon = "mdi:information-outline",
       json_attributes_topic = attribute_topic(cfg, "status"),
     }),
     binary_sensor_entry(cfg, "maintenance", {
@@ -307,86 +508,6 @@ function M.publish_link(client, cfg, view, online)
   return publish_state(client, cfg.topics.link, is_online and "ON" or "OFF", true)
 end
 
----@param view table
----@return table attributes
-local function charge_attributes(view)
-  return { capacity_total = view.capacity_total }
-end
-
----@param view table
----@return table attributes
-local function power_net_attributes(view)
-  return {
-    in_5m = view.in_5m,
-    out_5m = view.out_5m,
-    in_1h = view.in_1h,
-    out_1h = view.out_1h,
-    net_kf = view.net_kf,
-    passive_loss = view.passive_loss,
-  }
-end
-
----@param view table
----@return table attributes
-local function edge_time_attributes(view)
-  return { edge_text = view.edge_text, percent = view.percent }
-end
-
----@param view table
----@return table attributes
-local function status_attributes(view)
-  return {
-    maintenance = view.maintenance,
-    status_text = view.status_text,
-    redstone_enabled = view.redstone_enabled,
-    link = view.link,
-  }
-end
-
----@param key string
----@param view table
----@return string payload
-local function state_value(key, view)
-  if key == "charge" then
-    return state_text(view.percent, true)
-  elseif key == "stored" then
-    return state_text(view.stored)
-  elseif key == "capacity" then
-    return state_text(view.capacity_total)
-  elseif key == "power_in" then
-    return state_text(view.in_5s)
-  elseif key == "power_out" then
-    return state_text(view.out_5s)
-  elseif key == "power_net" then
-    return state_text(view.net_instant)
-  elseif key == "edge_time" then
-    return state_text(view.seconds_to_edge, true)
-  elseif key == "status" then
-    return view.status_text == nil and "unknown" or tostring(view.status_text)
-  elseif key == "maintenance" then
-    return state_text(view.maintenance)
-  elseif key == "lapotron_online" then
-    return state_text(view.online)
-  end
-  return "unknown"
-end
-
----@param key string
----@param view table
----@return table|nil attributes
-local function attributes_for(key, view)
-  if key == "charge" or key == "stored" then
-    return charge_attributes(view)
-  elseif key == "power_net" then
-    return power_net_attributes(view)
-  elseif key == "edge_time" then
-    return edge_time_attributes(view)
-  elseif key == "status" then
-    return status_attributes(view)
-  end
-  return nil
-end
-
 ---@param client table
 ---@param cfg table
 ---@param view table
@@ -394,10 +515,7 @@ end
 ---@return number|boolean|nil ok
 ---@return string|nil err
 local function publish_key(client, cfg, view, key)
-  if key == "link" then
-    return M.publish_link(client, cfg, view)
-  end
-  local ok, err = publish_state(client, cfg.topics[key], state_value(key, view), true)
+  local ok, err = publish_state(client, cfg.topics[key], M.state_payload(key, view), true)
   if not ok then
     return false, err
   end
