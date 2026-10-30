@@ -153,8 +153,15 @@ local function resolve_component(deps)
 end
 
 local function read_uptime(computer)
-  if computer and type(computer.uptime) == "function" then
-    local ok, value = pcall(computer.uptime)
+  local uptime = methods.get(computer, "uptime")
+  if uptime ~= nil then
+    local ok, value = pcall(uptime)
+    if ok and type(value) == "number" then
+      return value
+    end
+  end
+  if type(os.time) == "function" then
+    local ok, value = pcall(os.time)
     if ok and type(value) == "number" then
       return value
     end
@@ -192,6 +199,7 @@ function M.run_mqtt_session(cfg, session, deps)
   local computer = deps.computer
   local connect_timeout = tonumber(cfg.MQTT_CONNECT_TIMEOUT) or 30
   local ack_timeout = tonumber(cfg.MQTT_ACK_TIMEOUT) or 75
+  local log = deps.log or function(_) end
 
   local function stopped()
     return session.stop == true
@@ -376,19 +384,35 @@ function M.run_mqtt_session(cfg, session, deps)
     end
   end
 
+  local last_ensure_err = nil
   while not stopped() do
     local mqtt = deps.mqtt
     if mqtt == nil then
-      local ok, result = pcall(boot.ensure_luamqtt, cfg, {
+      -- Show the bootstrap in the UI instead of leaving LINK OFF while the
+      -- luamqtt download runs (or stalls) on a fresh computer.
+      session.link = "RETRY"
+      local ok, result, err = pcall(boot.ensure_luamqtt, cfg, {
         internet = deps.internet,
         filesystem = deps.filesystem,
         io = deps.io,
         os = deps.os,
+        now = deps.now,
+        sleep = sleep,
+        download_timeout = cfg.MQTT_DOWNLOAD_TIMEOUT,
+        log = log,
       })
       if ok then
         mqtt = result
+        if mqtt ~= nil then
+          last_ensure_err = nil
+        end
       end
       if mqtt == nil then
+        local message = ok and tostring(err) or tostring(result)
+        if message ~= last_ensure_err then
+          last_ensure_err = message
+          log("luamqtt unavailable: " .. message)
+        end
         session.link = "RETRY"
         if stopped() then
           return
@@ -398,10 +422,11 @@ function M.run_mqtt_session(cfg, session, deps)
     end
 
     if mqtt ~= nil and not stopped() then
-      local ok = pcall(run_one, mqtt)
+      local ok, err = pcall(run_one, mqtt)
       if not ok then
         session.connected = false
         session.link = "RETRY"
+        log("mqtt session failed: " .. tostring(err))
       end
       if not stopped() then
         sleep(cfg.MQTT_RETRY)
@@ -616,14 +641,23 @@ function M.run(cfg, deps)
     local mqtt_deps = shallow_copy(deps)
     mqtt_deps.computer = computer
     mqtt_deps.now = now
+    mqtt_deps.log = say
     local created, thread_handle = pcall(thread.create, function()
-      pcall(M.supervise_mqtt, cfg, session, mqtt_deps)
+      local ok, err = pcall(M.supervise_mqtt, cfg, session, mqtt_deps)
+      if not ok then
+        session.link = "FAULT"
+        say("laptop_reborn: MQTT thread failed: " .. tostring(err))
+      end
     end)
     if created then
       handle = thread_handle
+    else
+      session.link = "FAULT"
+      say("laptop_reborn: MQTT thread could not start: " .. tostring(thread_handle))
     end
   else
     session.link = "OFF"
+    say("laptop_reborn: MQTT disabled by ENABLE_MQTT=false or -M")
   end
 
   local previous = nil

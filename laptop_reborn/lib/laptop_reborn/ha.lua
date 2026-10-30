@@ -60,6 +60,23 @@ local function json_escape(value)
   )
 end
 
+-- GT storage can exceed int64, where "%d" raises "number has no integer
+-- representation" in Lua 5.3. Fall back to float formatting instead.
+---@param value number
+---@return string|nil
+local function number_text(value)
+  if value ~= value or value == math.huge or value == -math.huge then
+    return nil
+  end
+  if value == math.floor(value) then
+    local ok, text = pcall(string.format, "%d", value)
+    if ok then
+      return text
+    end
+  end
+  return string.format("%.14g", value)
+end
+
 ---@param value any
 ---@return string
 function M.json_encode(value)
@@ -69,10 +86,7 @@ function M.json_encode(value)
   elseif kind == "boolean" then
     return value and "true" or "false"
   elseif kind == "number" then
-    if value == math.floor(value) then
-      return string.format("%d", value)
-    end
-    return string.format("%.14g", value)
+    return number_text(value) or "null"
   elseif kind == "string" then
     return '"' .. json_escape(value) .. '"'
   elseif kind ~= "table" then
@@ -106,10 +120,7 @@ local function state_text(value)
   if kind == "boolean" then
     return value and "ON" or "OFF"
   elseif kind == "number" then
-    if value == math.floor(value) then
-      return string.format("%d", value)
-    end
-    return string.format("%.14g", value)
+    return number_text(value) or "unknown"
   end
   return tostring(value)
 end

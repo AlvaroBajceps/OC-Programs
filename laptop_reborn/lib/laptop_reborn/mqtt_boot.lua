@@ -26,11 +26,16 @@ local repair_attempted = false
 ---@param path string
 ---@param io table
 ---@param os table
+---@param opts table|nil `now`, `sleep`, `timeout` for the streaming read
 ---@return boolean, string|nil
-function M.download(internet, url, path, io, os)
+function M.download(internet, url, path, io, os, opts)
+  opts = opts or {}
   local ok, handle = pcall(internet.request, url)
   if not ok then
     return false, tostring(handle)
+  end
+  if handle == nil then
+    return false, "internet.request returned no handle"
   end
 
   local mt = getmetatable(handle)
@@ -53,12 +58,46 @@ function M.download(internet, url, path, io, os)
   if not file then
     return false, tostring(open_err)
   end
+  local function write_chunk(chunk)
+    if chunk == nil or #chunk == 0 then
+      return
+    end
+    local wrote, reason = file:write(chunk)
+    if not wrote then
+      error(reason or "write failed", 0)
+    end
+  end
   local ok_write, write_err = pcall(function()
-    for chunk in handle do
-      local wrote, reason = file:write(chunk)
-      if not wrote then
-        error(reason or "write failed", 0)
+    local read = type(handle) == "table" and handle.read or nil
+    if read ~= nil then
+      -- OC's internet handle returns "" while no data has arrived and nil at
+      -- EOF. Bound the wait so a blocked GitHub request cannot pin the MQTT
+      -- worker on LINK OFF forever.
+      local now = opts.now or (type(os.time) == "function" and os.time) or function()
+        return 0
       end
+      local sleep = opts.sleep or (type(os.sleep) == "function" and os.sleep) or function(_) end
+      local timeout = tonumber(opts.timeout) or 60
+      local deadline = now() + timeout
+      while true do
+        local chunk, reason = read()
+        if chunk == nil then
+          if reason ~= nil then
+            error(tostring(reason), 0)
+          end
+          break
+        elseif #chunk > 0 then
+          write_chunk(chunk)
+        elseif now() >= deadline then
+          error("download timeout", 0)
+        else
+          sleep(0.05)
+        end
+      end
+      return
+    end
+    for chunk in handle do
+      write_chunk(chunk)
     end
   end)
   if ok_write and type(file.flush) == "function" then
@@ -133,12 +172,17 @@ function M.ensure_luamqtt(cfg, deps)
     log("info", "installing luamqtt into " .. cfg.MQTT_DIR)
   end
 
+  local download_opts = {
+    now = deps.now,
+    sleep = deps.sleep,
+    timeout = deps.download_timeout,
+  }
   for _, name in ipairs(M.MQTT_FILES) do
     local target = cfg.MQTT_DIR .. "/" .. name
     local present = filesystem.exists(target)
     local size = present and filesystem.size(target) or 0
     if not present or size == 0 then
-      local downloaded, err = M.download(internet, M.MQTT_RAW .. name, target, io, os)
+      local downloaded, err = M.download(internet, M.MQTT_RAW .. name, target, io, os, download_opts)
       if not downloaded then
         return nil, "download failed for " .. name .. ": " .. tostring(err)
       end

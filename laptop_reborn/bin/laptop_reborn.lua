@@ -3,7 +3,7 @@
 
 local M = {}
 
-M.VERSION = "1.2.1"
+M.VERSION = "1.2.2"
 
 local SCALES = {
   ["1x"] = true,
@@ -147,7 +147,7 @@ local function write_config(path, cfg, deps)
   local io_module = deps.io or io
   local os_module = deps.os or os
 
-  local data = serialization.serialize(cfg, true)
+  local data = "return " .. serialization.serialize(cfg, false)
   local target = path
   if type(os_module.rename) == "function" then
     target = path .. ".tmp"
