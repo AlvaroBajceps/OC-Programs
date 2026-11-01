@@ -143,7 +143,6 @@ function luasocket_oc.receive(conn, size)
 
 	local buffer = conn.oc_buffer or ""
 	local timeout = conn.timeout
-	local deadline = timeout and (now() + timeout) or nil
 
 	while #buffer < size do
 		local ok, chunk, err = pcall(sock.read, size - #buffer)
@@ -157,19 +156,24 @@ function luasocket_oc.receive(conn, size)
 			conn.oc_buffer = nil
 			return nil, "closed"
 		end
+		if type(chunk) ~= "string" then
+			return nil, tostring(err or chunk)
+		end
 		if #chunk > 0 then
 			buffer = buffer .. chunk
-		elseif deadline then
-			local remaining = deadline - now()
-			if remaining <= 0 then
-				-- OC sockets never block, so report the timeout while keeping
-				-- partially received data for the next receive() call.
-				conn.oc_buffer = buffer
+		else
+			if err ~= nil and err ~= "timeout" and err ~= "wantread" then
+				return nil, tostring(err)
+			end
+			-- Keep partially received data for the next receive() call.
+			conn.oc_buffer = buffer
+			if timeout then
+				-- Ioloop mode. receive() runs inside luamqtt's receive
+				-- coroutine; sleeping here yields a nil packet to the ioloop.
+				-- Return timeout and let the ioloop's sleep_function wait.
 				return nil, "timeout"
 			end
-			os_sleep(math.min(remaining, 0.01))
-		else
-			-- Blocking mode: wait for the broker to send more data.
+			-- Sync mode: block and wait for the broker to send more data.
 			os_sleep(0.05)
 		end
 	end

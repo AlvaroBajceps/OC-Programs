@@ -8,6 +8,13 @@
 > [OC-Programs](https://github.com/AlvaroBajceps/OC-Programs) OPPM repository.
 > Upstream authorship and the MIT license apply; see [LICENSE](LICENSE).
 
+### OpenComputers connector change
+
+`lib/ab_luamqtt/luasocket_oc.lua` has a local fix: in ioloop mode its
+`receive()` returns `nil, "timeout"` instead of sleeping. Sleeping inside
+luamqtt's receive coroutine can surface as a nil packet at `client.lua:980`
+during CONNACK handling. Sync mode still blocks with `os.sleep`.
+
 MQTT ( [http://mqtt.org/](http://mqtt.org/) ) client library for Lua.
 **MQTT** is a popular network communication protocol working by **"publish/subscribe"** model.
 
