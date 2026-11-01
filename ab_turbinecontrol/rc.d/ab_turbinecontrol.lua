@@ -9,16 +9,25 @@ local thread = require("thread")
 local handle = nil
 
 local function daemon_path()
-  local ok, path = pcall(shell.resolve, "ab_turbinecontrol")
-  if ok and path ~= nil then
-    if filesystem.exists(path) then
-      return path
-    end
-    if filesystem.exists(path .. ".lua") then
-      return path .. ".lua"
+  -- OPPM's default root is /usr, so `... = "/bin"` lands here.
+  for _, candidate in ipairs({
+    "/usr/bin/ab_turbinecontrol.lua",
+    "/usr/bin/ab_turbinecontrol",
+    "/bin/ab_turbinecontrol.lua",
+    "/bin/ab_turbinecontrol",
+  }) do
+    if filesystem.exists(candidate) then
+      return candidate
     end
   end
-  return "/bin/ab_turbinecontrol.lua"
+
+  -- Also respect a custom PATH / non-default OPPM install root.
+  local ok, path = pcall(shell.resolve, "ab_turbinecontrol", "lua")
+  if ok and path ~= nil and filesystem.exists(path) then
+    return path
+  end
+
+  return nil
 end
 
 local function alive()
@@ -38,6 +47,11 @@ function start()
   end
 
   local path = daemon_path()
+  if path == nil then
+    print("ab_turbinecontrol: daemon not found; expected /usr/bin/ab_turbinecontrol.lua")
+    return
+  end
+
   local created, result = pcall(thread.create, function()
     local chunk, load_err = loadfile(path)
     if not chunk then

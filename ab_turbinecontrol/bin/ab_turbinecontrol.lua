@@ -14,7 +14,9 @@ local M = {}
 M.VERSION = "0.2.0"
 M.CONFIG_PATH = "/etc/ab_turbinecontrol.config.lua"
 
-package.path = "/lib/?.lua;/lib/?/init.lua;./?.lua;./?/init.lua;" .. package.path
+package.path = "/usr/lib/?.lua;/usr/lib/?/init.lua;"
+  .. "/lib/?.lua;/lib/?/init.lua;./?.lua;./?/init.lua;"
+  .. package.path
 
 local json = require("ab_json")
 
