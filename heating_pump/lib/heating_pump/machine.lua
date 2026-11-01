@@ -38,6 +38,13 @@ return function(deps)
   local function _parse_maintenance(lines)
     for i = 1, #lines do
       local cleaned = lines[i]:gsub("\194\167%w?", "")
+      local problem_count = cleaned:match("Problems:%s*(%d+)")
+      if problem_count then
+        local count = tonumber(problem_count)
+        if count and count > 0 then
+          return true, string.format("%d problem(s)", count)
+        end
+      end
       if cleaned:find("Maintenance") then
         local lower = cleaned:lower()
         -- "Working fine", "perfect", "No problem" → no maintenance.

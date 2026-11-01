@@ -13,12 +13,23 @@ local function _strip_codes(s)
   return s:gsub("\194\167%w?", "")
 end
 
--- Parse a comma-separated numeric string ("3,798,144" -> 3798144).
+-- Parse a grouped numeric string ("3,798,144" or "3.798.144" -> 3798144).
 local function _parse_num(s)
   if not s then
     return nil
   end
-  return tonumber((s:gsub(",", "")))
+  return tonumber((s:gsub("[,%.]", "")))
+end
+
+local AMOUNT_UNITS = { L = true, mB = true, X = true }
+
+-- Accept the 2.8 "L" unit and the 2.9 GTNHLib "mB"/"X" units.
+local function _parse_amounts(text)
+  local amt_str, amt_unit, cap_str, cap_unit = text:match("(%d[%d,.]*)%s*(%a+)%s*(%d[%d,.]*)%s*(%a+)")
+  if not amt_str or not AMOUNT_UNITS[amt_unit] or not AMOUNT_UNITS[cap_unit] then
+    return nil, nil
+  end
+  return _parse_num(amt_str), _parse_num(cap_str)
 end
 
 return function(deps)
@@ -62,20 +73,31 @@ return function(deps)
 
     for i = 1, #lines do
       local cleaned = _strip_codes(lines[i] or "")
-      if cleaned:find("Stored Fluid:") then
+      local is_legacy = cleaned:find("Stored Fluid:", 1, true) ~= nil
+      local is_modern = cleaned == "GT5U.infodata.digital_tank.stored_fluid"
+      if is_legacy or is_modern then
         if lines[i + 1] then
           local fluid_name = _strip_codes(lines[i + 1])
           fluid_name = fluid_name:gsub("^%s+", ""):gsub("%s+$", "")
-          if #fluid_name > 0 then
+          if
+            #fluid_name > 0
+            and fluid_name ~= "GT5U.infodata.digital_tank.stored_fluid.empty"
+            and fluid_name:lower() ~= "no fluid"
+          then
             state.name = fluid_name
             state.label = fluid_name
           end
         end
-        if lines[i + 2] then
-          local amounts = _strip_codes(lines[i + 2])
-          local amt_str, cap_str = amounts:match("(%d[%d,]*)%s*L%s*(%d[%d,]*)%s*L")
-          state.amount = _parse_num(amt_str)
-          state.capacity = _parse_num(cap_str)
+        for offset = 1, 3 do
+          local line = lines[i + offset]
+          if line then
+            local amount, capacity = _parse_amounts(_strip_codes(line))
+            if amount then
+              state.amount = amount
+              state.capacity = capacity
+              break
+            end
+          end
         end
         break
       end

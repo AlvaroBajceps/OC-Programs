@@ -2,7 +2,7 @@
 
 Agent operating knowledge for the heating_pump program under
 `src/OC-Programs/heating_pump/`. Pair with the repo-root `AGENTS.md` for
-workspace-wide toolchain and workflow rules; everything there (Lua 5.2,
+workspace-wide toolchain and workflow rules; everything there (Lua 5.3,
 selene/stylua/LuaLS mandatory run, no AI-slop comments, vendored stubs)
 applies here too.
 
@@ -42,7 +42,9 @@ toggle).
 **Maintenance** refers to the GT multiblock repair state reported via
 `getSensorInformation()`. A pump with pending maintenance is **excluded**
 from the eligible pool and commanded off. The controller parses the
-sensor lines for §-color-coded maintenance messages.
+§-color-coded sensor lines: GTNH 2.9 reports `Problems: N`, and the legacy
+`Maintenance` keyword lines are still recognised. `N > 0` means maintenance
+is pending.
 
 **Min-runtime** (5 seconds) prevents rapid on/off cycling: once a pump is
 enabled in normal operation, it stays on for at least 5 seconds even if
@@ -73,6 +75,33 @@ amount), the controller enters EMERGENCY mode and shuts down all pumps.
 Missing cold telemetry must never satisfy the threshold — an unreadable
 cold tank is assumed empty. This prevents DEHP explosions from running dry.
 
+## GTNH 2.9 compatibility
+
+GT5U 2.9 tank `getInfoData()` returns raw translation keys with no
+server-side translation. The Computronics `gt_machine` driver forwards them
+verbatim, so tank sensor lines are keys rather than English labels.
+Multiblock pumps still emit server-translated `Stored Energy:` / `Progress:`
+lines. `lib/heating_pump/tank.lua` accepts both tank forms:
+
+- 2.8 / already-translated: `Stored Fluid:` and `L` amounts.
+- 2.9: `GT5U.infodata.digital_tank.stored_fluid`, with amounts in `mB`
+  (GTNHLib `formatFluid` default) or `L` depending on config.
+- Empty tanks: `GT5U.infodata.digital_tank.stored_fluid.empty` precedes the
+  `0 <unit> <capacity> <unit>` line; the parser scans past it.
+
+Amount parsing assumes comma/dot thousands grouping (en_US/German-style
+locales). GTNHLib switches to exponential notation above 1T mB; such a tank
+would be unreadable and trip the cold-tank failsafe.
+
+Computronics 1.9.13 made `setWorkAllowed` asynchronous: it schedules the
+change for the next server tick and `isWorkAllowed()` can still report the
+old value until then. The wrapper records the requested state optimistically
+and treats the next `refresh()` as authoritative; the retry-on-mismatch loop
+absorbs the one-tick delay.
+
+Computronics 1.9.11 changed `getName()` to use `mte.getMetaName()` without a
+world lookup. Classification only needs the name to contain `tank`.
+
 ## Module map
 
 ```
@@ -84,8 +113,9 @@ lib/heating_pump/config.lua     constants: thresholds, timing, colors, screen
 lib/heating_pump/machine.lua    wraps a single gt_machine pump: refresh,
                                 maintenance parse, set_work_allowed, retry
                                 status, uptime
-lib/heating_pump/tank.lua       wraps a single transposer adapter: auto-probe
-                                tank side, read fluid amount/capacity
+lib/heating_pump/tank.lua       wraps a gt_machine tank (2.8/2.9 sensor
+                                formats) or transposer: auto-probe tank side,
+                                read fluid amount/capacity
 lib/heating_pump/stats.lua      sliding-window rate tracker for hot/cold tank
                                 fill-rate deltas (60s + 10s windows)
 lib/heating_pump/controller.lua the balancing + emergency-shutdown brain:
@@ -105,12 +135,8 @@ from controller, machines, tanks, and stats — it owns no persistent state.
 ## Component discovery
 
 The bin discovers all `gt_machine` components via `component.list()` and
-classifies each as a **pump** (DEHP) or **tank** (SuperTank 1) by probing:
-
-1. Call `getTankCount` on all 6 sides. If no side has tanks → **pump**.
-2. If tanks are found, call `getWorkMaxProgress`. If it returns a positive
-   number → **pump** (DEHP with internal tanks). Otherwise → **tank**
-   (storage machine like SuperTank 1).
+classifies each as a **pump** (DEHP) or **tank** (SuperTank/QuantumTank) by
+`getName()`: a name containing `tank` is a tank, everything else is a pump.
 
 Standalone `transposer` components are also discovered for backward
 compatibility and added to the tank pool. Tanks are then classified as

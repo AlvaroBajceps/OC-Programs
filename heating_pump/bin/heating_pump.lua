@@ -1,5 +1,5 @@
 -- Deep Earth Heating Pump Controller.
--- Lua 5.2, T2 computer + T2 screen, GTNH OpenComputers fork.
+-- Lua 5.3, T2 computer + T2 screen, GTNH 2.9 OpenComputers fork.
 --
 -- Prerequisites (in-world):
 --   * 4 Adapters placed on GregTech Deep Earth Heating Pump controllers,
