@@ -51,6 +51,7 @@ local DEFAULTS = {
   DISCOVERY_PREFIX = "homeassistant",
   BASE_TOPIC = "gtnh/turbines",
   DEVICE_NAME = "GTNH Turbines",
+  NODE_SUFFIX = "_turbines",
   KEEP_ALIVE = 30,
   STATE_INTERVAL = 30,
   PUBLISH_INTERVAL = 0.5,
@@ -108,7 +109,10 @@ local function build_config(computer, overrides)
   end
 
   local address = sanitize(computer.address())
-  cfg.node = "oc_" .. address:sub(1, 8)
+  local node_suffix = overrides.NODE_SUFFIX
+    or cfg.NODE_SUFFIX
+    or "_turbines"
+  cfg.node = "oc_" .. address:sub(1, 8) .. node_suffix
   if overrides.node ~= nil then
     cfg.node = tostring(overrides.node)
   end
@@ -117,6 +121,9 @@ local function build_config(computer, overrides)
   cfg.availability = cfg.base_topic .. "/availability"
   cfg.link_state = cfg.base_topic .. "/link/state"
   cfg.client_id = cfg.node
+  cfg.discovery_prefix = overrides.discovery_prefix
+    or cfg.DISCOVERY_PREFIX
+    or "homeassistant"
 
   cfg.sets = {}
   for _, layout in ipairs(SET_LAYOUT) do

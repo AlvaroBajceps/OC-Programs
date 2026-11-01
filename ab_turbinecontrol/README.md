@@ -20,6 +20,9 @@ network card for `redstone_bridge` and an Internet Card for MQTT. The bridge
 itself must already be running on a computer or microcontroller with a T2
 redstone card and a network card:
 
+The HA node is `oc_<address>_turbines`, not the laptop's `oc_<address>`, so the
+turbine device is separate from the laptop device in Home Assistant.
+
 ```text
 oppm install redstone_bridge
 rc redstone_bridge enable
@@ -68,6 +71,7 @@ return {
   DISCOVERY_PREFIX = "homeassistant",
   BASE_TOPIC = "gtnh/turbines",
   DEVICE_NAME = "GTNH Turbines",
+  NODE_SUFFIX = "_turbines",
   ENABLE_MQTT = true,
   KEEP_ALIVE = 30,
   STATE_INTERVAL = 30,
@@ -79,6 +83,9 @@ return {
   LOG_FILE = "/etc/ab_turbinecontrol.log",
 }
 ```
+
+If you override `node`, keep it different from the laptop's `oc_<address>` node;
+the default `NODE_SUFFIX = "_turbines"` already does this.
 
 Allow the broker and the required internet access in `config/OpenComputers.cfg`:
 
@@ -114,6 +121,31 @@ Switch commands:
 
 Discovery configs are retained QoS 1 under
 `homeassistant/<component>/<node>_<suffix>/config`.
+
+## Cleaning old merged entities
+
+Older builds used the laptop's `oc_<address>` node, so HA merged the turbine
+entities into the laptop device. Update, stop the old daemon, clean the old
+topics, then start the new node:
+
+```text
+oppm update ab_turbinecontrol
+rc ab_turbinecontrol stop
+ab_turbinecontrol_cleanup
+rc ab_turbinecontrol start
+```
+
+The cleanup script defaults to the current computer's old laptop node. Pass an
+explicit old node if needed:
+
+```text
+ab_turbinecontrol_cleanup oc_1a2b3c4d
+```
+
+It removes only the turbine switch, EStop, bank, availability and old turbine
+state topics. It deliberately leaves the laptop's `..._link` discovery topic
+alone; restart or reconnect the laptop afterwards so it republishes its own
+Broker Link entity.
 
 ## Service control
 
