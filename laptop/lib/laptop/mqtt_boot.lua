@@ -216,26 +216,27 @@ end
 function M.create_connector(deps)
   deps = deps or {}
   local internet = deps.internet or require("internet")
-  local buffer = deps.buffer or require("buffer")
   local sleep = deps.sleep or rawget(os, "sleep") or function() end
   local now = deps.now or require("computer").uptime
   local connect_timeout = deps.connect_timeout or 10
+  local write_timeout = deps.write_timeout or 10
   local should_stop = deps.should_stop
   local connector = {}
 
   function connector.connect(conn)
     local stream, err = internet.socket(conn.host, conn.port)
-    if not stream then
+    if not stream or not stream.socket then
       return false, err or "internet.socket failed"
     end
 
+    local raw = stream.socket
     local deadline = now() + connect_timeout
     while true do
       if should_stop and should_stop() then
         stream:close()
         return false, "stopped"
       end
-      local ok, connected, finish_err = pcall(stream.socket.finishConnect)
+      local ok, connected, finish_err = pcall(raw.finishConnect)
       if not ok then
         stream:close()
         return false, tostring(connected)
@@ -254,49 +255,99 @@ function M.create_connector(deps)
       sleep(0.05)
     end
 
-    local sock = buffer.new("rwb", stream)
-    sock:setvbuf("no")
-    conn.sock = sock
+    conn.stream = stream
+    conn.raw = raw
+    conn.oc_buffer = ""
     return true
   end
 
   function connector.shutdown(conn)
-    if conn.sock then
-      conn.sock:close()
-      conn.sock = nil
+    if conn.stream then
+      pcall(conn.stream.close, conn.stream)
     end
+    conn.stream = nil
+    conn.raw = nil
+    conn.oc_buffer = nil
   end
 
   function connector.send(conn, data, index)
-    local ok, err = conn.sock:write(data:sub(index))
-    if not ok then
-      return nil, tostring(err)
+    local raw = conn.raw
+    if not raw then
+      return nil, "connection is closed"
     end
-    return #data
+
+    local payload = tostring(data)
+    local position = index or 1
+    local deadline = now() + write_timeout
+    while position <= #payload do
+      local ok, written, write_err = pcall(raw.write, payload:sub(position))
+      if not ok then
+        return nil, tostring(written)
+      end
+      if type(written) ~= "number" then
+        return nil, tostring(write_err or written)
+      end
+      if written > 0 then
+        position = position + written
+      elseif now() >= deadline then
+        return nil, "internet socket write timed out"
+      else
+        local connected_ok, connected = pcall(raw.finishConnect)
+        if not connected_ok or not connected then
+          return nil, "connection is closed"
+        end
+        sleep(0.01)
+      end
+    end
+
+    return #payload
   end
 
   function connector.receive(conn, size)
-    local ok, data, err = pcall(conn.sock.read, conn.sock, size)
-    if not ok then
-      local message = tostring(data)
-      if message:match("timeout$") then
-        return nil, "timeout"
-      elseif message:match("wantread$") then
-        return nil, "wantread"
-      end
-      return nil, message
-    end
-    if data == nil and err == nil then
+    local raw = conn.raw
+    if not raw then
       return nil, "closed"
     end
-    return data, err
+    if not size or size < 1 then
+      return ""
+    end
+
+    local buffer = conn.oc_buffer or ""
+    while #buffer < size do
+      local ok, chunk, read_err = pcall(raw.read, size - #buffer)
+      if not ok then
+        return nil, "internet socket read failed: " .. tostring(chunk)
+      end
+      if chunk == nil then
+        if read_err == "timeout" or read_err == "wantread" then
+          conn.oc_buffer = buffer
+          return nil, "timeout"
+        end
+        if read_err ~= nil then
+          return nil, tostring(read_err)
+        end
+        conn.oc_buffer = nil
+        return nil, "closed"
+      end
+      if type(chunk) ~= "string" then
+        return nil, tostring(read_err or chunk)
+      end
+      if #chunk > 0 then
+        buffer = buffer .. chunk
+      else
+        if read_err ~= nil and read_err ~= "timeout" and read_err ~= "wantread" then
+          return nil, tostring(read_err)
+        end
+        conn.oc_buffer = buffer
+        return nil, "timeout"
+      end
+    end
+
+    conn.oc_buffer = buffer:sub(size + 1)
+    return buffer:sub(1, size)
   end
 
-  function connector.settimeout(conn, timeout)
-    if conn.sock then
-      conn.sock:setTimeout(timeout or math.huge)
-    end
-  end
+  function connector.settimeout(_conn, _timeout) end
 
   return connector
 end
