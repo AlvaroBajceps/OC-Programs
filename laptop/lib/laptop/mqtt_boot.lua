@@ -216,6 +216,7 @@ end
 function M.create_connector(deps)
   deps = deps or {}
   local internet = deps.internet or require("internet")
+  local buffer = deps.buffer or require("buffer")
   local sleep = deps.sleep or rawget(os, "sleep") or function() end
   local now = deps.now or require("computer").uptime
   local connect_timeout = deps.connect_timeout or 10
@@ -225,18 +226,17 @@ function M.create_connector(deps)
 
   function connector.connect(conn)
     local stream, err = internet.socket(conn.host, conn.port)
-    if not stream or not stream.socket then
+    if not stream then
       return false, err or "internet.socket failed"
     end
 
-    local raw = stream.socket
     local deadline = now() + connect_timeout
     while true do
       if should_stop and should_stop() then
         stream:close()
         return false, "stopped"
       end
-      local ok, connected, finish_err = pcall(raw.finishConnect)
+      local ok, connected, finish_err = pcall(stream.socket.finishConnect)
       if not ok then
         stream:close()
         return false, tostring(connected)
@@ -255,19 +255,23 @@ function M.create_connector(deps)
       sleep(0.05)
     end
 
+    local sock = buffer.new("rb", stream)
+    sock:setvbuf("no")
+    conn.sock = sock
     conn.stream = stream
-    conn.raw = raw
-    conn.oc_buffer = ""
+    conn.raw = stream.socket
     return true
   end
 
   function connector.shutdown(conn)
-    if conn.stream then
+    if conn.sock then
+      pcall(conn.sock.close, conn.sock)
+    elseif conn.stream then
       pcall(conn.stream.close, conn.stream)
     end
+    conn.sock = nil
     conn.stream = nil
     conn.raw = nil
-    conn.oc_buffer = nil
   end
 
   function connector.send(conn, data, index)
@@ -280,6 +284,9 @@ function M.create_connector(deps)
     local position = index or 1
     local deadline = now() + write_timeout
     while position <= #payload do
+      if should_stop and should_stop() then
+        return nil, "stopped"
+      end
       local ok, written, write_err = pcall(raw.write, payload:sub(position))
       if not ok then
         return nil, tostring(written)
@@ -304,50 +311,32 @@ function M.create_connector(deps)
   end
 
   function connector.receive(conn, size)
-    local raw = conn.raw
-    if not raw then
+    local sock = conn.sock
+    if not sock then
       return nil, "closed"
     end
-    if not size or size < 1 then
-      return ""
-    end
 
-    local buffer = conn.oc_buffer or ""
-    while #buffer < size do
-      local ok, chunk, read_err = pcall(raw.read, size - #buffer)
-      if not ok then
-        return nil, "internet socket read failed: " .. tostring(chunk)
-      end
-      if chunk == nil then
-        if read_err == "timeout" or read_err == "wantread" then
-          conn.oc_buffer = buffer
-          return nil, "timeout"
-        end
-        if read_err ~= nil then
-          return nil, tostring(read_err)
-        end
-        conn.oc_buffer = nil
-        return nil, "closed"
-      end
-      if type(chunk) ~= "string" then
-        return nil, tostring(read_err or chunk)
-      end
-      if #chunk > 0 then
-        buffer = buffer .. chunk
-      else
-        if read_err ~= nil and read_err ~= "timeout" and read_err ~= "wantread" then
-          return nil, tostring(read_err)
-        end
-        conn.oc_buffer = buffer
+    local ok, data, err = pcall(sock.read, sock, size)
+    if not ok then
+      local message = tostring(data)
+      if message:match("timeout$") then
         return nil, "timeout"
+      elseif message:match("wantread$") then
+        return nil, "wantread"
       end
+      return nil, message
     end
-
-    conn.oc_buffer = buffer:sub(size + 1)
-    return buffer:sub(1, size)
+    if data == nil and err == nil then
+      return nil, "closed"
+    end
+    return data, err
   end
 
-  function connector.settimeout(_conn, _timeout) end
+  function connector.settimeout(conn, timeout)
+    if conn.sock then
+      conn.sock:setTimeout(timeout or math.huge)
+    end
+  end
 
   return connector
 end
@@ -358,7 +347,11 @@ function M.ioloop_options()
   if type(sleep) ~= "function" then
     sleep = function() end
   end
-  return { sleep_function = sleep, sleep = 0.5, timeout = 0.5 }
+  -- buffer:read busy-loops raw socket reads until its read deadline and
+  -- discards partial bytes if that deadline expires mid-packet. Keep the
+  -- window short for idle load, but raise it toward 0.5 if broker lag causes
+  -- repeated desync/reconnect cycles.
+  return { sleep_function = sleep, sleep = 0.5, timeout = 0.1 }
 end
 
 ---Creates a fresh ioloop for one MQTT session. luamqtt's `get_ioloop` returns a
