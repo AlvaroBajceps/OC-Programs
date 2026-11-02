@@ -1,5 +1,5 @@
 --AlvaroBajceps 2026
-local version = "2.4.0"
+local version = "2.4.1"
 
 local _lap = require("ab_lapotron")
 local _kfc = require("ab_kalman")
@@ -34,6 +34,18 @@ local config = {
   mqtt_username = "",
   ---@type string
   mqtt_password = "",
+  ---@type number
+  ui_refresh = 2,
+  ---@type number
+  lapotron_refresh = 2,
+  ---@type number
+  redstone_refresh = 1,
+  ---@type number
+  mqtt_publish_interval = 2,
+  ---@type number
+  mqtt_state_interval = 60,
+  ---@type number
+  mqtt_publish_batch = 2,
 }
 
 local redshow_th = nil
@@ -278,6 +290,20 @@ local function shallow_copy(source)
   return copy
 end
 
+local function bounded_number(value, fallback, minimum, maximum)
+  local number = tonumber(value)
+  if number == nil or number ~= number then
+    return fallback
+  end
+  if number < minimum then
+    return minimum
+  end
+  if maximum ~= nil and number > maximum then
+    return maximum
+  end
+  return number
+end
+
 local function redthread()
   local bat_side = _sides.east
 
@@ -332,7 +358,7 @@ local function redthread()
       last_bat = write(dev, bat_side, bat_bars, last_bat)
     end
 
-    os.sleep(0.5)
+    os.sleep(bounded_number(config.redstone_refresh, 1, 0.1, 60))
   end
 end
 
@@ -432,6 +458,9 @@ local function main(...)
   ha_cfg.BROKER_PORT = config.mqtt_port
   ha_cfg.USERNAME = config.mqtt_username
   ha_cfg.PASSWORD = config.mqtt_password
+  ha_cfg.PUBLISH_INTERVAL = bounded_number(config.mqtt_publish_interval, 2, 0.5, 60)
+  ha_cfg.STATE_INTERVAL = bounded_number(config.mqtt_state_interval, 60, 1, 3600)
+  ha_cfg.PUBLISH_BATCH = bounded_number(config.mqtt_publish_batch, 2, 1, 16)
 
   if opts.s then
     print("Save config (from runtime)...")
@@ -488,7 +517,7 @@ local function main(...)
   local lbat_refresh = function()
     pull_lapotron()
   end
-  local lbat_refresh_handle = _ev.timer(1.0, lbat_refresh, math.huge)
+  local lbat_refresh_handle = _ev.timer(bounded_number(config.lapotron_refresh, 2, 0.5, 60), lbat_refresh, math.huge)
 
   local mqtt_handle = nil
   if ha_cfg.ENABLE_MQTT then
@@ -520,7 +549,7 @@ local function main(...)
 
   local loop_ok, loop_err = pcall(function()
     local previous = nil
-    while not session.stop and not _ev.pull(1, "interrupt") do
+    while not session.stop and not _ev.pull(bounded_number(config.ui_refresh, 2, 0.5, 60), "interrupt") do
       update_view()
 
       if ha_cfg.ENABLE_MQTT and session.connected and session.view ~= nil then

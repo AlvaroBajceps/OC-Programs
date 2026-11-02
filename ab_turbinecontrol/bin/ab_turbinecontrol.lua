@@ -11,12 +11,13 @@
 
 local M = {}
 
-M.VERSION = "0.2.0"
+M.VERSION = "0.3.0"
 M.CONFIG_PATH = "/etc/ab_turbinecontrol.config.lua"
 
-package.path = "/usr/lib/?.lua;/usr/lib/?/init.lua;"
-  .. "/lib/?.lua;/lib/?/init.lua;./?.lua;./?/init.lua;"
-  .. package.path
+local LIB_PATH = "/usr/lib/?.lua;/usr/lib/?/init.lua;/lib/?.lua;/lib/?/init.lua;./?.lua;./?/init.lua;"
+if not package.path:find("/usr/lib/?.lua", 1, true) then
+  package.path = LIB_PATH .. package.path
+end
 
 local json = require("ab_json")
 
@@ -53,15 +54,17 @@ local DEFAULTS = {
   DEVICE_NAME = "GTNH Turbines",
   NODE_SUFFIX = "_turbines",
   KEEP_ALIVE = 30,
-  STATE_INTERVAL = 30,
-  PUBLISH_INTERVAL = 0.5,
-  -- Each MQTT socket call is a synchronized component call that suspends the
-  -- whole Lua VM for a server tick. Poll slowly and spread retained publishes
-  -- so redstone events and interrupts are not queued behind socket traffic.
+  STATE_INTERVAL = 60,
+  PUBLISH_INTERVAL = 1,
+  -- Every MQTT socket read/write is a normal component call, so OpenComputers
+  -- services at most one per server tick. Poll often enough for a <3 s HA
+  -- command path, but keep retained publishes and full refreshes rare so the
+  -- shared Lua VM is not queued behind socket traffic.
   IOLOOP_TIMEOUT = 0.5,
-  IOLOOP_SLEEP = 0.5,
+  IOLOOP_SLEEP = 0.25,
   PUBLISH_BATCH = 2,
-  RESYNC_INTERVAL = 3,
+  RESYNC_INTERVAL = 30,
+  COMMAND_QUEUE_MAX = 16,
   MQTT_RETRY = 10,
   MQTT_CONNECT_TIMEOUT = 30,
   PULSE_SECONDS = 0.2,
@@ -445,31 +448,51 @@ local function parse_list(payload)
   return snapshots
 end
 
-local function discover_bridge(modem, timeout)
+local function pull_event(event, timeout)
+  local results = table.pack(pcall(event.pull, timeout))
+  if not results[1] then
+    pcall(os.sleep, 0.05)
+    return nil
+  end
+  return table.pack(table.unpack(results, 2, results.n))
+end
+
+local function is_control_event(ev)
+  local name = ev and ev[1]
+  return name == "interrupted" or name == "shutdown" or name == "ab_turbinecontrol_stop"
+end
+
+local function discover_bridge(modem, timeout, event, state)
   local computer = require("computer")
-  local event = require("event")
   local found
   local fallback
 
-  local function on_message(_, _local_addr, from, port, _distance, cmd, name)
-    if port == DISCOVERY_PORT and cmd == "iam" then
-      if name == "rsbridge" then
-        found = { address = from, name = name }
-      else
-        fallback = fallback or { address = from, name = name }
-      end
-    end
-  end
-
-  event.listen("modem_message", on_message)
   modem.broadcast(DISCOVERY_PORT, "discover")
 
   local deadline = computer.uptime() + (timeout or 3)
   while found == nil and computer.uptime() < deadline do
-    os.sleep(0.05)
+    if state ~= nil and state.stop then
+      return nil
+    end
+    local ev = pull_event(event, deadline - computer.uptime())
+    if ev and ev[1] then
+      if is_control_event(ev) then
+        if state ~= nil then
+          state.stop = true
+        end
+        return nil
+      elseif ev[1] == "modem_message" then
+        local from, port, cmd, name = ev[3], ev[4], ev[6], ev[7]
+        if port == DISCOVERY_PORT and cmd == "iam" then
+          if name == "rsbridge" then
+            found = { address = from, name = name }
+          else
+            fallback = fallback or { address = from, name = name }
+          end
+        end
+      end
+    end
   end
-
-  event.ignore("modem_message", on_message)
 
   if found then
     return found.address, found.name
@@ -480,50 +503,32 @@ local function discover_bridge(modem, timeout)
   return nil
 end
 
-local function list_snapshot(modem, bridge, timeout)
+local function wait_for_modem(event, state, timeout, predicate, on_other)
   local computer = require("computer")
-  local event = require("event")
-  local result
+  local deadline = computer.uptime() + (timeout or 1)
 
-  local function on_message(_, _local_addr, from, port, _distance, cmd, payload)
-    if from == bridge and port == SERVICE_PORT then
-      if cmd == "list" then
-        result = parse_list(payload)
-      elseif cmd == "error" then
-        result = false
+  while computer.uptime() < deadline do
+    if state ~= nil and state.stop then
+      return nil
+    end
+    local ev = pull_event(event, deadline - computer.uptime())
+    if ev and ev[1] then
+      if is_control_event(ev) then
+        if state ~= nil then
+          state.stop = true
+        end
+        return nil
+      elseif ev[1] == "modem_message" then
+        if predicate(ev) then
+          return ev
+        elseif on_other ~= nil then
+          on_other(ev)
+        end
       end
     end
   end
 
-  event.listen("modem_message", on_message)
-  modem.send(bridge, SERVICE_PORT, "list")
-
-  local deadline = computer.uptime() + (timeout or 1)
-  while result == nil and computer.uptime() < deadline do
-    os.sleep(0.05)
-  end
-
-  event.ignore("modem_message", on_message)
-
-  if result then
-    return result
-  end
   return nil
-end
-
-local function list_once(modem, bridge, state, timeout)
-  local snapshots = list_snapshot(modem, bridge, timeout or 1.0)
-  if not snapshots then
-    return false
-  end
-
-  for side, snapshot in pairs(snapshots) do
-    state.raw[side] = snapshot
-    state.raw_known[side] = true
-    recompute_set(state, side)
-  end
-
-  return true
 end
 
 local function apply_changed(state, side, color, value)
@@ -542,6 +547,55 @@ local function apply_changed(state, side, color, value)
   raw[color] = tonumber(value) or 0
   state.raw_known[side] = true
   recompute_set(state, side)
+  return true
+end
+
+local function handle_changed_event(state, bridge, ev)
+  local from, port, cmd = ev[3], ev[4], ev[6]
+  if from ~= bridge or port ~= SERVICE_PORT or cmd ~= "changed" then
+    return false
+  end
+
+  state.changed_events = state.changed_events + 1
+  local side, color, new_value = ev[7], ev[8], ev[10]
+  if color == -1 then
+    state.needs_resync = true
+  else
+    apply_changed(state, side, color, new_value)
+  end
+  return true
+end
+
+local function list_snapshot(modem, bridge, timeout, event, state)
+  modem.send(bridge, SERVICE_PORT, "list")
+
+  local ev = wait_for_modem(event, state, timeout or 1, function(message)
+    return message[3] == bridge and message[4] == SERVICE_PORT and (message[6] == "list" or message[6] == "error")
+  end, function(message)
+    handle_changed_event(state, bridge, message)
+  end)
+
+  if ev == nil then
+    return nil
+  end
+  if ev[6] == "error" then
+    return false
+  end
+  return parse_list(ev[7])
+end
+
+local function list_once(modem, bridge, state, timeout, event)
+  local snapshots = list_snapshot(modem, bridge, timeout or 1.0, event, state)
+  if not snapshots then
+    return false
+  end
+
+  for side, snapshot in pairs(snapshots) do
+    state.raw[side] = snapshot
+    state.raw_known[side] = true
+    recompute_set(state, side)
+  end
+
   return true
 end
 
@@ -582,7 +636,15 @@ local function parse_command(cfg, topic, payload)
   return nil
 end
 
-local function run_mqtt_session(cfg, state, log)
+local function enqueue_command(state, command, max)
+  max = math.max(1, tonumber(max) or 16)
+  while #state.commands >= max do
+    table.remove(state.commands, 1)
+  end
+  state.commands[#state.commands + 1] = command
+end
+
+local function run_mqtt_session(cfg, state, log, owner_alive)
   local mqtt = require("ab_luamqtt")
   local ioloop = require("ab_luamqtt.ioloop")
   local connector = require("ab_luamqtt.luasocket_oc")
@@ -609,8 +671,8 @@ local function run_mqtt_session(cfg, state, log)
 
   local client = mqtt.client(args)
   local loop = ioloop.create({
-    timeout = tonumber(cfg.IOLOOP_TIMEOUT) or 0.5,
-    sleep = tonumber(cfg.IOLOOP_SLEEP) or 0.5,
+    timeout = math.max(0.05, tonumber(cfg.IOLOOP_TIMEOUT) or 0.5),
+    sleep = math.max(0.05, tonumber(cfg.IOLOOP_SLEEP) or 0.25),
     sleep_function = os.sleep,
   })
 
@@ -730,7 +792,8 @@ local function run_mqtt_session(cfg, state, log)
       pcall(client.acknowledge, client, message)
       local command = parse_command(cfg, message.topic, message.payload)
       if command then
-        computer.pushSignal("ab_turbinecontrol_command", command.number, command.action)
+        enqueue_command(state, command, cfg.COMMAND_QUEUE_MAX)
+        computer.pushSignal("ab_turbinecontrol_wake")
       end
     end,
 
@@ -762,6 +825,10 @@ local function run_mqtt_session(cfg, state, log)
 
   tick = function()
     local now = computer.uptime()
+
+    if owner_alive ~= nil and not owner_alive() then
+      state.stop = true
+    end
 
     if state.stop then
       if connected then
@@ -812,9 +879,10 @@ local function run_mqtt_session(cfg, state, log)
   return true
 end
 
-local function supervise_mqtt(cfg, state, log)
-  while not state.stop do
-    local called, ok, err = pcall(run_mqtt_session, cfg, state, log)
+local function supervise_mqtt(cfg, state, log, owner_alive)
+  local retry = math.max(1, tonumber(cfg.MQTT_RETRY) or 10)
+  while not state.stop and (owner_alive == nil or owner_alive()) do
+    local called, ok, err = pcall(run_mqtt_session, cfg, state, log, owner_alive)
     if not called then
       state.connected = false
       state.link = "OFFLINE"
@@ -825,9 +893,9 @@ local function supervise_mqtt(cfg, state, log)
       log("warn", "MQTT session failed: " .. tostring(err))
     end
 
-    if not state.stop then
-      local remaining = cfg.MQTT_RETRY
-      while remaining > 0 and not state.stop do
+    if not state.stop and (owner_alive == nil or owner_alive()) then
+      local remaining = retry
+      while remaining > 0 and not state.stop and (owner_alive == nil or owner_alive()) do
         local slice = math.min(0.5, remaining)
         os.sleep(slice)
         remaining = remaining - slice
@@ -885,9 +953,11 @@ function M.main(deps)
     end
   end
   shared.instance = instance
+  shared.stop = false
   local function release_instance()
     if shared.instance == instance then
       shared.instance = nil
+      shared.stop = nil
     end
   end
 
@@ -918,6 +988,16 @@ function M.main(deps)
     state.raw_known[set.side] = false
   end
 
+  local owner_proc = process.findProcess()
+  local owner_handler = owner_proc and owner_proc.data and owner_proc.data.coroutine_handler
+  local owner_root = (owner_handler and owner_handler.root) or coroutine.running()
+  local function owner_alive()
+    if owner_proc == nil or owner_root == nil then
+      return true
+    end
+    return process.list[owner_root] == owner_proc
+  end
+
   local modem_address = component.list("modem")()
   if not modem_address then
     log("error", "no modem / network card")
@@ -931,13 +1011,22 @@ function M.main(deps)
   local bridge
   local bridge_name
   while not state.stop do
+    if shared.stop then
+      state.stop = true
+      break
+    end
     log("info", "looking for redstone_bridge on port " .. DISCOVERY_PORT)
-    bridge, bridge_name = discover_bridge(modem, 3)
+    bridge, bridge_name = discover_bridge(modem, 3, event, state)
     if bridge then
       break
     end
-    log("warn", "redstone_bridge not found; retrying")
-    os_module.sleep(5)
+    if not state.stop then
+      log("warn", "redstone_bridge not found; retrying")
+      local ev = pull_event(event, 5)
+      if ev and is_control_event(ev) then
+        state.stop = true
+      end
+    end
   end
 
   if state.stop then
@@ -950,7 +1039,7 @@ function M.main(deps)
   pcall(modem.close, DISCOVERY_PORT)
   log("info", "bridge found: " .. tostring(bridge_name))
 
-  list_once(modem, bridge, state)
+  list_once(modem, bridge, state, 1.0, event)
 
   local known_sides = 0
   for _, set in ipairs(cfg.sets) do
@@ -960,70 +1049,53 @@ function M.main(deps)
   end
   log("info", string.format("initial turbine state listed (%d/%d sides)", known_sides, #cfg.sets))
 
-  local function on_modem_message(_, _local_addr, from, port, _distance, cmd, side, color, _old_value, new_value)
-    if from == bridge and port == SERVICE_PORT and cmd == "changed" then
-      state.changed_events = state.changed_events + 1
-      if color == -1 then
-        state.needs_resync = true
-      else
-        apply_changed(state, side, color, new_value)
-      end
-    end
-  end
-
-  local function on_command(_, number, action)
-    if type(number) == "number" and (action == "ON" or action == "OFF") then
-      state.commands[#state.commands + 1] = { number = number, action = action }
-    end
-  end
-
   local function run_command(command)
+    local color
+    if command.action == "ON" then
+      color = SIG.reset
+    elseif command.action == "OFF" then
+      color = SIG.estop
+    else
+      return
+    end
+
     for _, set in ipairs(cfg.sets) do
       if set.number == command.number then
-        local view = state.sets[set.side] or {}
-        if command.action == "ON" then
-          if not view.known or view.stopped then
-            pulse(modem, bridge, set.side, SIG.reset, cfg, log)
-          end
-        elseif command.action == "OFF" then
-          if not view.known or not view.stopped then
-            pulse(modem, bridge, set.side, SIG.estop, cfg, log)
-          end
-        end
+        pulse(modem, bridge, set.side, color, cfg, log)
         break
       end
     end
   end
 
-  local stop_daemon
-  stop_daemon = function()
-    if state.stop then
-      return
-    end
+  local function stop_daemon()
     state.stop = true
-    pcall(event.ignore, "modem_message", on_modem_message)
-    pcall(event.ignore, "ab_turbinecontrol_command", on_command)
-    pcall(event.ignore, "ab_turbinecontrol_stop", stop_daemon)
-    pcall(event.ignore, "shutdown", stop_daemon)
-    pcall(event.ignore, "interrupted", stop_daemon)
+    shared.stop = true
   end
-
-  event.listen("modem_message", on_modem_message)
-  event.listen("ab_turbinecontrol_command", on_command)
-  event.listen("ab_turbinecontrol_stop", stop_daemon)
-  event.listen("shutdown", stop_daemon)
-  event.listen("interrupted", stop_daemon)
 
   local mqtt_handle
   if cfg.ENABLE_MQTT then
     local created, handle = pcall(thread.create, function()
-      local ok, err = pcall(supervise_mqtt, cfg, state, log)
+      local ok, err = pcall(supervise_mqtt, cfg, state, log, owner_alive)
       if not ok then
         log("error", "MQTT thread crashed: " .. tostring(err))
       end
     end)
-    if created then
+    if created and handle ~= nil then
       mqtt_handle = handle
+      if type(handle.detach) ~= "function" then
+        log("warn", "MQTT thread detach unavailable; disabling MQTT")
+        pcall(handle.kill, handle)
+        mqtt_handle = nil
+        state.link = "OFFLINE"
+      else
+        local detached, detach_result = pcall(handle.detach, handle)
+        if not detached or detach_result == nil then
+          log("warn", "cannot detach MQTT thread; disabling MQTT")
+          pcall(handle.kill, handle)
+          mqtt_handle = nil
+          state.link = "OFFLINE"
+        end
+      end
     else
       log("error", "cannot start MQTT thread: " .. tostring(handle))
     end
@@ -1033,21 +1105,41 @@ function M.main(deps)
 
   local last_resync = computer.uptime()
   local last_stats = last_resync
-  local resync_interval = math.max(1, tonumber(cfg.RESYNC_INTERVAL) or 3)
+  local resync_interval = math.max(5, tonumber(cfg.RESYNC_INTERVAL) or 30)
+  local command_queue_max = tonumber(cfg.COMMAND_QUEUE_MAX) or 16
   while not state.stop do
-    os_module.sleep(0.5)
+    if shared.stop then
+      state.stop = true
+      break
+    end
+
+    local ev = pull_event(event, 0.5)
+    if ev and ev[1] then
+      if is_control_event(ev) then
+        stop_daemon()
+      elseif ev[1] == "modem_message" then
+        handle_changed_event(state, bridge, ev)
+      elseif ev[1] == "ab_turbinecontrol_command" then
+        local number, action = ev[2], ev[3]
+        if type(number) == "number" and (action == "ON" or action == "OFF") then
+          enqueue_command(state, { number = number, action = action }, command_queue_max)
+        end
+      end
+    end
+
+    while not state.stop and #state.commands > 0 do
+      run_command(table.remove(state.commands, 1))
+    end
 
     if not state.stop then
-      if #state.commands > 0 then
-        run_command(table.remove(state.commands, 1))
-      end
-
       local now = computer.uptime()
       if state.needs_resync or now - last_resync >= resync_interval then
         state.needs_resync = false
         last_resync = now
-        if list_once(modem, bridge, state, 1.0) then
+        if list_once(modem, bridge, state, 1.0, event) then
           state.resyncs = state.resyncs + 1
+        else
+          last_resync = now - resync_interval + 5
         end
       end
 
@@ -1083,6 +1175,16 @@ function M.main(deps)
   release_instance()
   log("info", "stopped")
 end
+
+M.build_config = build_config
+M.parse_command = parse_command
+M.parse_list = parse_list
+M.parse_snapshot = parse_snapshot
+M.bank_state = bank_state
+M.enqueue_command = enqueue_command
+M.discover_bridge = discover_bridge
+M.list_snapshot = list_snapshot
+M.list_once = list_once
 
 -- selene: allow(global_usage)
 if rawget(_G, "AB_TURBINECONTROL_NO_AUTORUN") ~= true then

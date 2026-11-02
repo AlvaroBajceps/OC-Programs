@@ -80,6 +80,10 @@ end
 
 -- selene: allow(unused_variable)
 function stop()
+  local shared = package.loaded["ab_turbinecontrol.shared"]
+  if shared ~= nil then
+    shared.stop = true
+  end
   computer.pushSignal("ab_turbinecontrol_stop")
 
   if handle == nil then

@@ -3,9 +3,12 @@
 Headless MQTT / Home Assistant controller for four GregTech turbine sets behind
 one [`redstone_bridge`](../redstone_bridge) daemon. No screen or GUI is used.
 
-The daemon makes one `list` query at startup, then uses `event.listen` for the
-bridge's `changed` broadcasts. MQTT runs in its own OpenOS thread so broker
-outages do not stop redstone processing.
+The daemon polls the bridge with `event.pull` for its `changed` broadcasts.
+OpenOS does not dispatch `event.listen` handlers registered inside a
+`thread.create` thread, so the daemon's loop, discovery, and list queries all
+use the thread-safe pull path. MQTT runs in a detached OpenOS thread so broker
+outages do not stop redstone processing, and the main loop keeps listening for
+modem and command signals while it waits for a bridge reply.
 
 ## Install
 
@@ -74,12 +77,13 @@ return {
   NODE_SUFFIX = "_turbines",
   ENABLE_MQTT = true,
   KEEP_ALIVE = 30,
-  STATE_INTERVAL = 30,
-  PUBLISH_INTERVAL = 0.5,
+  STATE_INTERVAL = 60,
+  PUBLISH_INTERVAL = 1,
   IOLOOP_TIMEOUT = 0.5,
-  IOLOOP_SLEEP = 0.5,
+  IOLOOP_SLEEP = 0.25,
   PUBLISH_BATCH = 2,
-  RESYNC_INTERVAL = 3,
+  RESYNC_INTERVAL = 30,
+  COMMAND_QUEUE_MAX = 16,
   MQTT_RETRY = 10,
   MQTT_CONNECT_TIMEOUT = 30,
   PULSE_SECONDS = 0.2,
@@ -90,6 +94,23 @@ return {
 
 If you override `node`, keep it different from the laptop's `oc_<address>` node;
 the default `NODE_SUFFIX = "_turbines"` already does this.
+
+## Sharing the computer with the laptop
+
+One OpenComputers computer is one cooperative Lua VM, and every MQTT socket
+read/write and `modem.send` is a normal component call serviced at most once per
+server tick. Keep the combined call rate low when the laptop UI and this daemon
+share a machine.
+
+The defaults above are chosen for that setup: bridge `changed` events are the
+primary state path, a full `list` resync runs every 30 s as a safety net, and a
+full MQTT refresh runs every 60 s. Setting `RESYNC_INTERVAL` back to a few
+seconds adds bridge traffic without improving normal state freshness.
+
+The matching `laptop` defaults are `ui_refresh = 2`, `lapotron_refresh = 2`,
+`redstone_refresh = 1`, `mqtt_publish_interval = 2`, `mqtt_state_interval = 60`,
+and `mqtt_publish_batch = 2`. Laptop MQTT is telemetry only; set
+`mqtt_enable = false` in the laptop config if its HA entities are not needed.
 
 Allow the broker and the required internet access in `config/OpenComputers.cfg`:
 
@@ -165,6 +186,8 @@ continues booting while the daemon runs. Logs go to `/etc/ab_turbinecontrol.log`
 
 ## Notes
 
+- Switch commands always pulse Reset/EStop; the cached status is not used to
+  suppress them, so a stale state cannot swallow an HA command.
 - Red status is authoritative: `ON` means stopped. It drives the HA switch
   state and the overall stopped state.
 - Grey is the EStop request/critical-fault line; it is also the pulse used to
