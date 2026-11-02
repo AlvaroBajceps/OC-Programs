@@ -61,7 +61,7 @@ local DEFAULTS = {
   IOLOOP_TIMEOUT = 0.5,
   IOLOOP_SLEEP = 0.5,
   PUBLISH_BATCH = 2,
-  RESYNC_INTERVAL = 15,
+  RESYNC_INTERVAL = 3,
   MQTT_RETRY = 10,
   MQTT_CONNECT_TIMEOUT = 30,
   PULSE_SECONDS = 0.2,
@@ -652,9 +652,11 @@ local function run_mqtt_session(cfg, state, log)
           return false, err
         end
         last[topic] = payload
+        state.publishes = state.publishes + 1
         published = published + 1
       end
     end
+    state.pending_count = #pending_topics
     return true
   end
 
@@ -845,6 +847,7 @@ function M.main(deps)
   local event = deps.event or require("event")
   local filesystem = deps.filesystem or require("filesystem")
   local thread = deps.thread or require("thread")
+  local process = deps.process or require("process")
   local io_module = deps.io or io
   local os_module = deps.os or os
 
@@ -861,6 +864,33 @@ function M.main(deps)
   end
   log("info", "starting ab_turbinecontrol " .. M.VERSION .. " node=" .. cfg.node)
 
+  local shared = package.loaded["ab_turbinecontrol.shared"]
+  if shared == nil then
+    shared = {}
+    package.loaded["ab_turbinecontrol.shared"] = shared
+  end
+  local instance = process.findProcess()
+  local previous_instance = shared.instance
+  if previous_instance ~= nil and previous_instance ~= instance then
+    local running = false
+    for _, entry in pairs(process.list) do
+      if entry == previous_instance then
+        running = true
+        break
+      end
+    end
+    if running then
+      log("warn", "another instance is already running; exiting")
+      return
+    end
+  end
+  shared.instance = instance
+  local function release_instance()
+    if shared.instance == instance then
+      shared.instance = nil
+    end
+  end
+
   local state = {
     stop = false,
     connected = false,
@@ -871,6 +901,10 @@ function M.main(deps)
     raw_known = {},
     commands = {},
     needs_resync = false,
+    changed_events = 0,
+    resyncs = 0,
+    publishes = 0,
+    pending_count = 0,
   }
   for _, set in ipairs(cfg.sets) do
     state.sets[set.side] = {
@@ -887,6 +921,7 @@ function M.main(deps)
   local modem_address = component.list("modem")()
   if not modem_address then
     log("error", "no modem / network card")
+    release_instance()
     return
   end
   local modem = component.proxy(modem_address)
@@ -908,6 +943,7 @@ function M.main(deps)
   if state.stop then
     pcall(modem.close, DISCOVERY_PORT)
     pcall(modem.close, SERVICE_PORT)
+    release_instance()
     return
   end
 
@@ -926,6 +962,7 @@ function M.main(deps)
 
   local function on_modem_message(_, _local_addr, from, port, _distance, cmd, side, color, _old_value, new_value)
     if from == bridge and port == SERVICE_PORT and cmd == "changed" then
+      state.changed_events = state.changed_events + 1
       if color == -1 then
         state.needs_resync = true
       else
@@ -995,7 +1032,8 @@ function M.main(deps)
   end
 
   local last_resync = computer.uptime()
-  local resync_interval = math.max(1, tonumber(cfg.RESYNC_INTERVAL) or 15)
+  local last_stats = last_resync
+  local resync_interval = math.max(1, tonumber(cfg.RESYNC_INTERVAL) or 3)
   while not state.stop do
     os_module.sleep(0.5)
 
@@ -1008,7 +1046,24 @@ function M.main(deps)
       if state.needs_resync or now - last_resync >= resync_interval then
         state.needs_resync = false
         last_resync = now
-        list_once(modem, bridge, state, 1.0)
+        if list_once(modem, bridge, state, 1.0) then
+          state.resyncs = state.resyncs + 1
+        end
+      end
+
+      if now - last_stats >= 30 then
+        last_stats = now
+        log(
+          "info",
+          string.format(
+            "stats changed=%d resync=%d published=%d pending=%d mqtt=%s",
+            state.changed_events,
+            state.resyncs,
+            state.publishes,
+            state.pending_count,
+            state.link
+          )
+        )
       end
     end
   end
@@ -1025,6 +1080,7 @@ function M.main(deps)
 
   pcall(modem.close, DISCOVERY_PORT)
   pcall(modem.close, SERVICE_PORT)
+  release_instance()
   log("info", "stopped")
 end
 
