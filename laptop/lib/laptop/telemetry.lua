@@ -173,7 +173,10 @@ function M.run_mqtt_session(cfg, session, deps)
         session.reconnect_at = nil
         pcall(ha.publish_availability, client, cfg, true)
         pcall(ha.publish_discovery, client, cfg)
-        pcall(ha.publish_all_state, client, cfg, session.view)
+        session.pending = session.pending or {}
+        for _, key in ipairs(DIFF_KEYS) do
+          session.pending[key] = true
+        end
       end,
       acknowledge = function()
         session.ack_pending_since = nil
@@ -213,7 +216,10 @@ function M.run_mqtt_session(cfg, session, deps)
     loop:add(client)
 
     local last_state = uptime()
+    local last_publish = 0
     local pending_retry_at = 0
+    local publish_interval = math.max(0.1, tonumber(cfg.PUBLISH_INTERVAL) or 0.5)
+    local publish_batch = math.max(1, tonumber(cfg.PUBLISH_BATCH) or 2)
     tick = function()
       local at = uptime()
       if stopped() then
@@ -250,15 +256,22 @@ function M.run_mqtt_session(cfg, session, deps)
         end
       end
 
-      if next(session.pending) ~= nil and at >= pending_retry_at then
+      session.pending = session.pending or {}
+      if next(session.pending) ~= nil and at >= pending_retry_at and at - last_publish >= publish_interval then
         local batch = {}
+        local queued = 0
         for key in pairs(session.pending) do
+          if queued >= publish_batch then
+            break
+          end
           batch[key] = true
+          queued = queued + 1
         end
         if session.connected and session.ack_pending_since == nil then
           session.ack_pending_since = at
         end
         local called, published = pcall(ha.publish_changed, client, cfg, session.view, batch)
+        last_publish = at
         if called and published then
           for key in pairs(batch) do
             session.pending[key] = nil
@@ -270,12 +283,8 @@ function M.run_mqtt_session(cfg, session, deps)
 
       if at - last_state >= cfg.STATE_INTERVAL then
         last_state = at
-        if session.connected and session.ack_pending_since == nil then
-          session.ack_pending_since = at
-        end
-        local called, published = pcall(ha.publish_all_state, client, cfg, session.view)
-        if called and published then
-          pcall(ha.publish_link, client, cfg, { link = "ONLINE" }, true)
+        for _, key in ipairs(DIFF_KEYS) do
+          session.pending[key] = true
         end
       end
     end

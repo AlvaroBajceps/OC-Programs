@@ -41,6 +41,7 @@ local function alive()
   return true
 end
 
+-- selene: allow(unused_variable)
 function start()
   if alive() then
     return
@@ -77,6 +78,7 @@ function start()
   end
 end
 
+-- selene: allow(unused_variable)
 function stop()
   computer.pushSignal("ab_turbinecontrol_stop")
 
@@ -84,7 +86,7 @@ function stop()
     return
   end
 
-  pcall(thread.waitForAll, { handle }, 12)
+  pcall(thread.waitForAll, { handle }, 2)
   if alive() then
     pcall(handle.kill, handle)
   end

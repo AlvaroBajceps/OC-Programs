@@ -24,23 +24,23 @@ local DISCOVERY_PORT = 99
 local SERVICE_PORT = 100
 
 local SIG = {
-  estop         = 7,  -- grey, EStop request pulse
-  estop_request = 7,  -- grey, latched request / critical fault
-  estop_status  = 14, -- red, current status: ON = stopped
-  reset         = 9,  -- cyan, reset pulse
-  down_flow     = 1,  -- orange
-  down_boost    = 2,  -- magenta
-  down_maint    = 0,  -- white
-  up_flow       = 3,  -- light blue
-  up_boost      = 4,  -- yellow
-  up_maint      = 15, -- black
+  estop = 7, -- grey, EStop request pulse
+  estop_request = 7, -- grey, latched request / critical fault
+  estop_status = 14, -- red, current status: ON = stopped
+  reset = 9, -- cyan, reset pulse
+  down_flow = 1, -- orange
+  down_boost = 2, -- magenta
+  down_maint = 0, -- white
+  up_flow = 3, -- light blue
+  up_boost = 4, -- yellow
+  up_maint = 15, -- black
 }
 
 local SET_LAYOUT = {
-  { number = 1, title = "RED",        side = 5 },
-  { number = 2, title = "LIME",       side = 2 },
+  { number = 1, title = "RED", side = 5 },
+  { number = 2, title = "LIME", side = 2 },
   { number = 3, title = "LIGHT BLUE", side = 1 },
-  { number = 4, title = "YELLOW",     side = 4 },
+  { number = 4, title = "YELLOW", side = 4 },
 }
 
 local DEFAULTS = {
@@ -55,6 +55,13 @@ local DEFAULTS = {
   KEEP_ALIVE = 30,
   STATE_INTERVAL = 30,
   PUBLISH_INTERVAL = 0.5,
+  -- Each MQTT socket call is a synchronized component call that suspends the
+  -- whole Lua VM for a server tick. Poll slowly and spread retained publishes
+  -- so redstone events and interrupts are not queued behind socket traffic.
+  IOLOOP_TIMEOUT = 0.5,
+  IOLOOP_SLEEP = 0.5,
+  PUBLISH_BATCH = 2,
+  RESYNC_INTERVAL = 15,
   MQTT_RETRY = 10,
   MQTT_CONNECT_TIMEOUT = 30,
   PULSE_SECONDS = 0.2,
@@ -109,9 +116,7 @@ local function build_config(computer, overrides)
   end
 
   local address = sanitize(computer.address())
-  local node_suffix = overrides.NODE_SUFFIX
-    or cfg.NODE_SUFFIX
-    or "_turbines"
+  local node_suffix = overrides.NODE_SUFFIX or cfg.NODE_SUFFIX or "_turbines"
   cfg.node = "oc_" .. address:sub(1, 8) .. node_suffix
   if overrides.node ~= nil then
     cfg.node = tostring(overrides.node)
@@ -121,9 +126,7 @@ local function build_config(computer, overrides)
   cfg.availability = cfg.base_topic .. "/availability"
   cfg.link_state = cfg.base_topic .. "/link/state"
   cfg.client_id = cfg.node
-  cfg.discovery_prefix = overrides.discovery_prefix
-    or cfg.DISCOVERY_PREFIX
-    or "homeassistant"
+  cfg.discovery_prefix = overrides.discovery_prefix or cfg.DISCOVERY_PREFIX or "homeassistant"
 
   cfg.sets = {}
   for _, layout in ipairs(SET_LAYOUT) do
@@ -184,12 +187,7 @@ local function make_logger(cfg, io, os_module, filesystem)
       end
     end
 
-    local line = string.format(
-      "%s [%s] %s\n",
-      stamp,
-      tostring(level),
-      tostring(message)
-    )
+    local line = string.format("%s [%s] %s\n", stamp, tostring(level), tostring(message))
 
     local ok, file = pcall(io.open, cfg.LOG_FILE, "a")
     if ok and file then
@@ -322,10 +320,7 @@ end
 
 local function publish_discovery(client, cfg, entries)
   for _, entry in ipairs(entries) do
-    local topic = cfg.discovery_prefix
-      .. "/" .. entry.component
-      .. "/" .. entry.object_id
-      .. "/config"
+    local topic = cfg.discovery_prefix .. "/" .. entry.component .. "/" .. entry.object_id .. "/config"
     local ok, err = client:publish({
       topic = topic,
       payload = json.encode(entry.payload),
@@ -351,51 +346,12 @@ local function publish_state(client, topic, payload, retain)
   })
 end
 
-local function publish_states(client, payloads, opts)
-  opts = opts or {}
-  local changed_only = opts.changed_only == true
-  local last = opts.last
-  local ok_all = true
-  local first_err
-
-  for topic, payload in pairs(payloads) do
-    if not changed_only
-        or last == nil
-        or last[topic] ~= payload then
-      local ok, err = publish_state(client, topic, payload, true)
-      if ok then
-        if last ~= nil then
-          last[topic] = payload
-        end
-      else
-        ok_all = false
-        first_err = first_err or err
-        if last ~= nil then
-          last[topic] = nil
-        end
-      end
-    end
-  end
-
-  return ok_all, first_err
-end
-
 local function publish_availability(client, cfg, online)
-  return publish_state(
-    client,
-    cfg.availability,
-    online and "online" or "offline",
-    true
-  )
+  return publish_state(client, cfg.availability, online and "online" or "offline", true)
 end
 
 local function publish_link(client, cfg, online)
-  return publish_state(
-    client,
-    cfg.link_state,
-    online and "ONLINE" or "OFFLINE",
-    true
-  )
+  return publish_state(client, cfg.link_state, online and "ONLINE" or "OFFLINE", true)
 end
 
 -- ---------------------------------------------------------------------------
@@ -424,11 +380,9 @@ local function recompute_set(state, side)
   view.known = known
   view.stopped = known and high(raw, SIG.estop_status)
   view.estop = known and high(raw, SIG.estop_request)
-  view.bank_up = known
-    and bank_state(high(raw, SIG.up_flow), high(raw, SIG.up_boost), high(raw, SIG.up_maint))
+  view.bank_up = known and bank_state(high(raw, SIG.up_flow), high(raw, SIG.up_boost), high(raw, SIG.up_maint))
     or "Unknown"
-  view.bank_down = known
-    and bank_state(high(raw, SIG.down_flow), high(raw, SIG.down_boost), high(raw, SIG.down_maint))
+  view.bank_down = known and bank_state(high(raw, SIG.down_flow), high(raw, SIG.down_boost), high(raw, SIG.down_maint))
     or "Unknown"
 
   state.sets[side] = view
@@ -472,11 +426,11 @@ end
 
 local SIDE_NUM = {
   bottom = 0,
-  top    = 1,
-  back   = 2,
-  front  = 3,
-  right  = 4,
-  left   = 5,
+  top = 1,
+  back = 2,
+  front = 3,
+  right = 4,
+  left = 5,
 }
 
 local function parse_list(payload)
@@ -497,7 +451,7 @@ local function discover_bridge(modem, timeout)
   local found
   local fallback
 
-  local function on_message(_, local_addr, from, port, distance, cmd, name)
+  local function on_message(_, _local_addr, from, port, _distance, cmd, name)
     if port == DISCOVERY_PORT and cmd == "iam" then
       if name == "rsbridge" then
         found = { address = from, name = name }
@@ -531,7 +485,7 @@ local function list_snapshot(modem, bridge, timeout)
   local event = require("event")
   local result
 
-  local function on_message(_, local_addr, from, port, distance, cmd, payload)
+  local function on_message(_, _local_addr, from, port, _distance, cmd, payload)
     if from == bridge and port == SERVICE_PORT then
       if cmd == "list" then
         result = parse_list(payload)
@@ -655,8 +609,8 @@ local function run_mqtt_session(cfg, state, log)
 
   local client = mqtt.client(args)
   local loop = ioloop.create({
-    timeout = 0.05,
-    sleep = 0.05,
+    timeout = tonumber(cfg.IOLOOP_TIMEOUT) or 0.5,
+    sleep = tonumber(cfg.IOLOOP_SLEEP) or 0.5,
     sleep_function = os.sleep,
   })
 
@@ -664,15 +618,52 @@ local function run_mqtt_session(cfg, state, log)
   local torn_down = false
   local connected = false
   local last = {}
+  local pending_topics = {}
+  local pending_set = {}
+  local latest_payloads = {}
   local session_started = computer.uptime()
   local last_all = session_started
   local last_diff = session_started
+  local publish_batch = math.max(1, tonumber(cfg.PUBLISH_BATCH) or 2)
+
+  local function enqueue_states(payloads, all)
+    latest_payloads = payloads
+    for topic, payload in pairs(payloads) do
+      if all then
+        last[topic] = nil
+      end
+      if (all or last[topic] ~= payload) and not pending_set[topic] then
+        pending_topics[#pending_topics + 1] = topic
+        pending_set[topic] = true
+      end
+    end
+  end
+
+  local function flush_states(limit)
+    local published = 0
+    while published < limit and #pending_topics > 0 do
+      local topic = table.remove(pending_topics, 1)
+      pending_set[topic] = nil
+      local payload = latest_payloads[topic]
+      if payload ~= nil and last[topic] ~= payload then
+        local ok, err = publish_state(client, topic, payload, true)
+        if not ok then
+          last[topic] = nil
+          return false, err
+        end
+        last[topic] = payload
+        published = published + 1
+      end
+    end
+    return true
+  end
 
   local function teardown()
     if torn_down then
       return
     end
     torn_down = true
+    local was_connected = connected
     connected = false
     state.connected = false
     if tick ~= nil then
@@ -681,7 +672,9 @@ local function run_mqtt_session(cfg, state, log)
     end
     pcall(loop.remove, loop, client)
     loop.running = false
-    pcall(client.disconnect, client)
+    if was_connected then
+      pcall(client.disconnect, client)
+    end
     pcall(client.close_connection, client, "session closed")
   end
 
@@ -711,10 +704,7 @@ local function run_mqtt_session(cfg, state, log)
         log("error", "discovery publish failed: " .. tostring(err))
       end
 
-      ok, err = publish_states(client, build_state_payloads(cfg, state), { last = last })
-      if not ok then
-        log("error", "initial state publish failed: " .. tostring(err))
-      end
+      enqueue_states(build_state_payloads(cfg, state), true)
 
       for _, set in ipairs(cfg.sets) do
         local sub_ok, sub_err = client:subscribe({
@@ -772,9 +762,10 @@ local function run_mqtt_session(cfg, state, log)
     local now = computer.uptime()
 
     if state.stop then
-      pcall(publish_link, client, cfg, false)
-      pcall(publish_availability, client, cfg, false)
-      pcall(client.disconnect, client)
+      if connected then
+        pcall(publish_link, client, cfg, false)
+        pcall(publish_availability, client, cfg, false)
+      end
       teardown()
       return
     end
@@ -789,26 +780,20 @@ local function run_mqtt_session(cfg, state, log)
       return
     end
 
+    local payloads = build_state_payloads(cfg, state)
+    latest_payloads = payloads
     if now - last_all >= cfg.STATE_INTERVAL then
       last_all = now
-      local ok, err = publish_states(
-        client,
-        build_state_payloads(cfg, state),
-        { last = last }
-      )
-      if not ok then
-        log("error", "state republish failed: " .. tostring(err))
-      end
+      last_diff = now
+      enqueue_states(payloads, true)
     elseif now - last_diff >= cfg.PUBLISH_INTERVAL then
       last_diff = now
-      local ok, err = publish_states(
-        client,
-        build_state_payloads(cfg, state),
-        { changed_only = true, last = last }
-      )
-      if not ok then
-        log("error", "state publish failed: " .. tostring(err))
-      end
+      enqueue_states(payloads, false)
+    end
+
+    local ok, err = flush_states(publish_batch)
+    if not ok then
+      log("error", "state publish failed: " .. tostring(err))
     end
   end
 
@@ -884,6 +869,8 @@ function M.main(deps)
     sets = {},
     raw = {},
     raw_known = {},
+    commands = {},
+    needs_resync = false,
   }
   for _, set in ipairs(cfg.sets) do
     state.sets[set.side] = {
@@ -935,38 +922,33 @@ function M.main(deps)
       known_sides = known_sides + 1
     end
   end
-  log("info", string.format(
-    "initial turbine state listed (%d/%d sides)",
-    known_sides,
-    #cfg.sets
-  ))
+  log("info", string.format("initial turbine state listed (%d/%d sides)", known_sides, #cfg.sets))
 
-  local function on_modem_message(
-    _,
-    local_addr,
-    from,
-    port,
-    distance,
-    cmd,
-    side,
-    color,
-    old_value,
-    new_value
-  )
+  local function on_modem_message(_, _local_addr, from, port, _distance, cmd, side, color, _old_value, new_value)
     if from == bridge and port == SERVICE_PORT and cmd == "changed" then
-      apply_changed(state, side, color, new_value)
+      if color == -1 then
+        state.needs_resync = true
+      else
+        apply_changed(state, side, color, new_value)
+      end
     end
   end
 
   local function on_command(_, number, action)
+    if type(number) == "number" and (action == "ON" or action == "OFF") then
+      state.commands[#state.commands + 1] = { number = number, action = action }
+    end
+  end
+
+  local function run_command(command)
     for _, set in ipairs(cfg.sets) do
-      if set.number == number then
+      if set.number == command.number then
         local view = state.sets[set.side] or {}
-        if action == "ON" then
+        if command.action == "ON" then
           if not view.known or view.stopped then
             pulse(modem, bridge, set.side, SIG.reset, cfg, log)
           end
-        elseif action == "OFF" then
+        elseif command.action == "OFF" then
           if not view.known or not view.stopped then
             pulse(modem, bridge, set.side, SIG.estop, cfg, log)
           end
@@ -1012,14 +994,29 @@ function M.main(deps)
     state.link = "OFFLINE"
   end
 
+  local last_resync = computer.uptime()
+  local resync_interval = math.max(1, tonumber(cfg.RESYNC_INTERVAL) or 15)
   while not state.stop do
     os_module.sleep(0.5)
+
+    if not state.stop then
+      if #state.commands > 0 then
+        run_command(table.remove(state.commands, 1))
+      end
+
+      local now = computer.uptime()
+      if state.needs_resync or now - last_resync >= resync_interval then
+        state.needs_resync = false
+        last_resync = now
+        list_once(modem, bridge, state, 1.0)
+      end
+    end
   end
 
   state.stop = true
 
   if mqtt_handle ~= nil then
-    pcall(thread.waitForAll, { mqtt_handle }, 5)
+    pcall(thread.waitForAll, { mqtt_handle }, 1)
     local status_ok, status = pcall(mqtt_handle.status, mqtt_handle)
     if not status_ok or status ~= "dead" then
       pcall(mqtt_handle.kill, mqtt_handle)
@@ -1033,6 +1030,7 @@ end
 
 -- selene: allow(global_usage)
 if rawget(_G, "AB_TURBINECONTROL_NO_AUTORUN") ~= true then
+  -- selene: allow(undefined_variable)
   return M.main({ ... })
 end
 

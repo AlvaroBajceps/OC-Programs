@@ -235,10 +235,14 @@ function M.create_connector(deps)
         stream:close()
         return false, "stopped"
       end
-      local ok, connected = pcall(stream.socket.finishConnect)
+      local ok, connected, finish_err = pcall(stream.socket.finishConnect)
       if not ok then
         stream:close()
         return false, tostring(connected)
+      end
+      if connected == nil then
+        stream:close()
+        return false, tostring(finish_err or "connection lost")
       end
       if connected then
         break
@@ -303,7 +307,7 @@ function M.ioloop_options()
   if type(sleep) ~= "function" then
     sleep = function() end
   end
-  return { sleep_function = sleep, sleep = 0.05, timeout = 0.05 }
+  return { sleep_function = sleep, sleep = 0.5, timeout = 0.5 }
 end
 
 ---Creates a fresh ioloop for one MQTT session. luamqtt's `get_ioloop` returns a

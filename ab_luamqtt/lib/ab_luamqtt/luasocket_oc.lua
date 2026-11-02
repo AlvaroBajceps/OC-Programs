@@ -62,10 +62,14 @@ function luasocket_oc.connect(conn)
 	-- OC's TCP sockets are non-blocking; wait for the connection to complete.
 	local deadline = now() + CONNECT_TIMEOUT
 	while true do
-		local ok, connected = pcall(sock.finishConnect)
+		local ok, connected, finish_err = pcall(sock.finishConnect)
 		if not ok then
 			close_socket(sock)
 			return false, "internet.connect failed: " .. tostring(connected)
+		end
+		if connected == nil then
+			close_socket(sock)
+			return false, "internet.connect failed: " .. tostring(finish_err or "connection lost")
 		end
 		if connected then
 			break

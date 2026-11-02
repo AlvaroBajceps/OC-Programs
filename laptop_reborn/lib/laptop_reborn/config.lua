@@ -63,6 +63,8 @@ local function make_defaults(address)
     KEEP_ALIVE = 30,
     RECONNECT = 5,
     STATE_INTERVAL = 30,
+    PUBLISH_INTERVAL = 0.5,
+    PUBLISH_BATCH = 2,
     MQTT_RETRY = 10,
     MQTT_CONNECT_TIMEOUT = 30,
     MQTT_ACK_TIMEOUT = 75,

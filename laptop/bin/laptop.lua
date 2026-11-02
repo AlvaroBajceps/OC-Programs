@@ -285,6 +285,17 @@ local function redthread()
   local load_side_minus = _sides.west
 
   local ticks = 0
+  local last_plus
+  local last_minus
+  local last_bat
+
+  local function write(dev, side, value, last)
+    if value == last then
+      return last
+    end
+    dev.setOutput(side, value)
+    return value
+  end
 
   while true do
     ticks = ticks + 1
@@ -309,16 +320,19 @@ local function redthread()
       load_bars = load_bars * ticks_mod
     end
 
-    if load_bars > 0 then
-      shared.reddev.setOutput(load_side_plus, load_bars)
-      shared.reddev.setOutput(load_side_minus, 0)
-    else
-      shared.reddev.setOutput(load_side_plus, 0)
-      shared.reddev.setOutput(load_side_minus, -load_bars)
+    local dev = shared.reddev
+    if dev then
+      if load_bars > 0 then
+        last_plus = write(dev, load_side_plus, load_bars, last_plus)
+        last_minus = write(dev, load_side_minus, 0, last_minus)
+      else
+        last_plus = write(dev, load_side_plus, 0, last_plus)
+        last_minus = write(dev, load_side_minus, -load_bars, last_minus)
+      end
+      last_bat = write(dev, bat_side, bat_bars, last_bat)
     end
-    shared.reddev.setOutput(bat_side, bat_bars)
 
-    os.sleep(0.4)
+    os.sleep(0.5)
   end
 end
 
@@ -497,74 +511,96 @@ local function main(...)
 
   redshow_th = _th.create(redthread)
 
-  local previous = nil
-  while not _ev.pull(1, "interrupt") do
-    update_view()
+  local function request_stop()
+    session.stop = true
+  end
 
-    if ha_cfg.ENABLE_MQTT and session.connected and session.view ~= nil then
-      local dirty = _telemetry.dirty_keys(previous, session.view)
-      for key in pairs(dirty) do
-        session.pending[key] = true
+  _ev.listen("interrupted", request_stop)
+  _ev.listen("shutdown", request_stop)
+
+  local loop_ok, loop_err = pcall(function()
+    local previous = nil
+    while not session.stop and not _ev.pull(1, "interrupt") do
+      update_view()
+
+      if ha_cfg.ENABLE_MQTT and session.connected and session.view ~= nil then
+        local dirty = _telemetry.dirty_keys(previous, session.view)
+        for key in pairs(dirty) do
+          session.pending[key] = true
+        end
       end
-    end
-    previous = shallow_copy(session.view)
+      previous = shallow_copy(session.view)
 
-    status_avg = secondToEdge(shared.lbat, shared.lbat_kf)
-    local status_avg_str = statusFromSeconds(status_avg, shared.lbat.cache.capacityUsed)
+      status_avg = secondToEdge(shared.lbat, shared.lbat_kf)
+      local status_avg_str = statusFromSeconds(status_avg, shared.lbat.cache.capacityUsed)
 
-    _term.clear()
+      _term.clear()
 
-    print("###   LAPTOP   ###")
+      print("###   LAPTOP   ###")
 
-    if not shared.lbat_notok then
-      print("\nCharge: " .. shared.lbat.cache.capacityUsed .. "%")
-      print("In: " .. shared.lbat.cache.powerAvgIn_5s .. "EU/t")
-      print("Out: " .. shared.lbat.cache.powerAvgOut_5s .. "EU/t")
-      print("Net: " .. shared.lbat.cache.powerAvgIn_5s - shared.lbat.cache.powerAvgOut_5s .. "EU/t")
-      print("\nINST " .. shared.lbat.cache.energyStatusText)
-      print("AVG  " .. status_avg_str)
+      if not shared.lbat_notok then
+        print("\nCharge: " .. shared.lbat.cache.capacityUsed .. "%")
+        print("In: " .. shared.lbat.cache.powerAvgIn_5s .. "EU/t")
+        print("Out: " .. shared.lbat.cache.powerAvgOut_5s .. "EU/t")
+        print("Net: " .. shared.lbat.cache.powerAvgIn_5s - shared.lbat.cache.powerAvgOut_5s .. "EU/t")
+        print("\nINST " .. shared.lbat.cache.energyStatusText)
+        print("AVG  " .. status_avg_str)
 
-      if shared.lbat.cache.maintenanceStatus then
-        _component.gpu.setForeground(0xFF0000)
-        print("\nMaintenance: fix my ass!")
-        _component.gpu.setForeground(fg_color)
+        if shared.lbat.cache.maintenanceStatus then
+          _component.gpu.setForeground(0xFF0000)
+          print("\nMaintenance: fix my ass!")
+          _component.gpu.setForeground(fg_color)
+        else
+          print("\nMaintenance: no problemo!")
+        end
       else
-        print("\nMaintenance: no problemo!")
+        print("\nLapotron offline")
       end
-    else
-      print("\nLapotron offline")
+
+      print("MQTT: " .. session.link)
+    end
+  end)
+
+  local function cleanup()
+    session.stop = true
+    if mqtt_handle ~= nil then
+      local waited, all_done = pcall(_th.waitForAll, { mqtt_handle }, 1)
+      local still_running = true
+      if type(mqtt_handle.status) == "function" then
+        local status_ok, status = pcall(mqtt_handle.status, mqtt_handle)
+        still_running = not (status_ok and status == "dead")
+      else
+        still_running = not (waited and all_done)
+      end
+      if still_running then
+        pcall(mqtt_handle.kill, mqtt_handle)
+      end
     end
 
-    print("MQTT: " .. session.link)
+    if redshow_th ~= nil then
+      pcall(redshow_th.kill, redshow_th)
+    end
+    if shared.reddev then
+      for side = 0, 5 do
+        pcall(shared.reddev.setOutput, shared.reddev, side, 0)
+      end
+    end
+
+    pcall(_ev.ignore, "component_added", onDevAdd)
+    pcall(_ev.ignore, "interrupted", request_stop)
+    pcall(_ev.ignore, "shutdown", request_stop)
+    pcall(_ev.cancel, lbat_refresh_handle)
+    pcall(_term.clear)
+    pcall(setResolution)
+    if shared.lbat then
+      pcall(shared.lbat.dispose, shared.lbat)
+    end
   end
 
-  session.stop = true
-  if mqtt_handle ~= nil then
-    local waited, all_done = pcall(_th.waitForAll, { mqtt_handle }, 2)
-    local still_running = true
-    if type(mqtt_handle.status) == "function" then
-      local status_ok, status = pcall(mqtt_handle.status, mqtt_handle)
-      still_running = not (status_ok and status == "dead")
-    else
-      still_running = not (waited and all_done)
-    end
-    if still_running then
-      pcall(mqtt_handle.kill, mqtt_handle)
-    end
+  cleanup()
+  if not loop_ok then
+    error(loop_err, 0)
   end
-
-  redshow_th:kill()
-  if shared.reddev then
-    for side = 0, 5 do
-      shared.reddev.setOutput(side, 0)
-    end
-  end
-
-  _ev.ignore("component_added", onDevAdd)
-  _ev.cancel(lbat_refresh_handle)
-  _term.clear()
-  setResolution()
-  shared.lbat:dispose()
 end
 
 local M = { main = main }
