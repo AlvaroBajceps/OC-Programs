@@ -43,6 +43,7 @@ local function make_defaults(address)
   return {
     VERSION = M.VERSION,
     node = node,
+    client_id = node .. "_lp",
     base_topic = base_topic,
     availability = base_topic .. "/availability",
     discovery_prefix = "homeassistant",

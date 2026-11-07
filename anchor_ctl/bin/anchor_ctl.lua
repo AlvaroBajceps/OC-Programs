@@ -279,7 +279,7 @@ function M.main(deps)
     stopping = false
     local client_args = {
       uri = cfg.BROKER_HOST .. ":" .. cfg.BROKER_PORT,
-      id = cfg.node,
+      id = cfg.mqtt_client_id or cfg.node,
       clean = true,
       version = mqtt.v311,
       keep_alive = cfg.KEEP_ALIVE,

@@ -40,6 +40,7 @@ local function make_defaults(address)
   return {
     VERSION = M.VERSION,
     node = node,
+    client_id = node .. "_lr",
     base_topic = base_topic,
     availability = base_topic .. "/availability",
     discovery_prefix = "homeassistant",
@@ -95,7 +96,12 @@ function M.build(address, overrides)
   local cfg = make_defaults(address)
   overrides = overrides or {}
   for key, value in pairs(overrides) do
-    cfg[key] = value
+    if key ~= "client_id" then
+      cfg[key] = value
+    end
+  end
+  if type(overrides.MQTT_CLIENT_ID) == "string" and overrides.MQTT_CLIENT_ID ~= "" then
+    cfg.client_id = overrides.MQTT_CLIENT_ID
   end
   return cfg
 end

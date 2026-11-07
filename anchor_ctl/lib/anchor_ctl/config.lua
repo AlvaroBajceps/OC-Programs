@@ -112,6 +112,7 @@ local function build(computer, overrides)
   cfg.username = cfg.USERNAME
   cfg.password = cfg.PASSWORD
   cfg.client_id = cfg.node
+  cfg.mqtt_client_id = cfg.node .. "_ac"
 
   for key, value in pairs(overrides) do
     cfg[key] = value
@@ -174,6 +175,9 @@ local function build(computer, overrides)
   end
   if overrides.client_id == nil then
     cfg.client_id = cfg.node
+  end
+  if overrides.mqtt_client_id == nil then
+    cfg.mqtt_client_id = cfg.node .. "_ac"
   end
 
   return cfg

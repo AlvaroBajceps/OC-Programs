@@ -127,6 +127,7 @@ function M.make_config(computer)
     username = M.CONFIG.username,
     password = M.CONFIG.password,
     client_id = node,
+    mqtt_client_id = node .. "_mh",
     base_topic = base,
     availability_topic = base .. "/availability",
     lamp_command_topic = base .. "/lamp/set",
@@ -1749,7 +1750,7 @@ function M.main(deps)
 
   local client_args = {
     uri = cfg.broker .. ":" .. cfg.port,
-    id = cfg.client_id,
+    id = cfg.mqtt_client_id or cfg.client_id,
     clean = true,
     version = mqtt.v311,
     keep_alive = cfg.keep_alive,

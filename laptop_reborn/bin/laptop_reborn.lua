@@ -73,6 +73,73 @@ function M.diagnose(deps)
   end
 
   say("Laptop Reborn v" .. M.VERSION)
+
+  local computer = deps.computer
+  if computer == nil then
+    local loaded, module = pcall(require, "computer")
+    if loaded then
+      computer = module
+    end
+  end
+  local config_ok, config = pcall(require, "laptop_reborn.config")
+  local cfg = nil
+  if config_ok and type(config) == "table" and type(config.build) == "function" then
+    local address = "unknown"
+    if computer ~= nil and type(computer.address) == "function" then
+      local address_ok, value = pcall(computer.address)
+      if address_ok and value ~= nil then
+        address = value
+      end
+    end
+    local filesystem = deps.filesystem
+    if filesystem == nil then
+      local loaded, module = pcall(require, "filesystem")
+      if loaded then
+        filesystem = module
+      end
+    end
+    cfg = config.build(address)
+    local overrides = nil
+    if type(config.load_override) == "function" then
+      local loaded, result = pcall(config.load_override, cfg.CONFIG_PATH, {
+        filesystem = filesystem,
+        io = deps.io,
+        loadfile = deps.loadfile,
+      })
+      if loaded and type(result) == "table" then
+        overrides = result
+        cfg = config.build(address, overrides)
+      end
+    end
+    say("mqtt broker: " .. tostring(cfg.BROKER_HOST) .. ":" .. tostring(cfg.BROKER_PORT))
+    say("mqtt enabled: " .. (cfg.ENABLE_MQTT and "yes" or "no"))
+    say("mqtt config: " .. tostring(cfg.CONFIG_PATH))
+    if filesystem ~= nil and type(filesystem.exists) == "function" then
+      local exists_ok, exists = pcall(filesystem.exists, cfg.CONFIG_PATH)
+      if exists_ok then
+        say("mqtt config file: " .. (exists and "present" or "absent"))
+      end
+    end
+    local derived_node = "oc_" .. tostring(address):gsub("[^%w]", ""):lower():sub(1, 8)
+    say("mqtt node: " .. tostring(cfg.node))
+    say("mqtt client id: " .. tostring(cfg.client_id or cfg.node))
+    if cfg.node ~= derived_node then
+      say("mqtt node mismatch: config pins " .. tostring(cfg.node) .. ", this computer is " .. derived_node)
+    end
+    local mqtt_ok, mqtt_err = pcall(require, "mqtt")
+    if mqtt_ok then
+      say("mqtt module: ok")
+    else
+      say("mqtt module: missing (" .. tostring(mqtt_err) .. ")")
+    end
+    if component ~= nil and type(component.isAvailable) == "function" then
+      local available_ok, available = pcall(component.isAvailable, "internet")
+      if available_ok then
+        say("internet card: " .. (available and "yes" or "no"))
+      end
+    end
+  end
+
   say("component API: " .. type(component) .. ", list=" .. type(component and component.list))
   if methods.get(component, "list") == nil then
     say("component.list is unavailable from this program")

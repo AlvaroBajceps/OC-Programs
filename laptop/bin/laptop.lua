@@ -587,6 +587,9 @@ local function main(...)
       end
 
       print("MQTT: " .. session.link)
+      if session.last_error ~= nil then
+        print("MQTT ERR: " .. tostring(session.last_error))
+      end
     end
   end)
 

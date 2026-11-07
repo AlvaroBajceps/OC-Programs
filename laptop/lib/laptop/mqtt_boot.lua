@@ -127,6 +127,35 @@ function M.download(internet, url, path, io, os, opts)
   return true, nil
 end
 
+local MQTT_COMPAT_MODULES = {
+  "const",
+  "client",
+  "ioloop",
+  "protocol",
+  "protocol4",
+  "protocol5",
+  "tools",
+  "bitwrap",
+  "bit53",
+}
+
+-- The ab_luamqtt OPPM package ships the same pinned sources locally. Prefer
+-- it so a fresh computer does not need raw.githubusercontent.com at runtime.
+local function installed_luamqtt()
+  local ok, library = pcall(require, "ab_luamqtt")
+  if not ok or type(library) ~= "table" or type(library.client) ~= "function" then
+    return nil
+  end
+  package.loaded["mqtt"] = library
+  for _, name in ipairs(MQTT_COMPAT_MODULES) do
+    local loaded, module = pcall(require, "ab_luamqtt." .. name)
+    if loaded then
+      package.loaded["mqtt." .. name] = module
+    end
+  end
+  return library
+end
+
 ---@param cfg table
 ---@param deps table|nil
 ---@return table|nil mqtt
@@ -142,12 +171,18 @@ function M.ensure_luamqtt(cfg, deps)
 
   local root = cfg.MQTT_DIR:match("^(.*)/[^/]+$") or cfg.MQTT_DIR
   local marker = root .. "/?.lua"
+  if not package.path:find(marker, 1, true) then
+    package.path = marker .. ";" .. root .. "/?/init.lua;" .. package.path
+  end
+
   local cached_ok, cached = pcall(require, "mqtt")
   if cached_ok then
     return cached, nil
   end
-  if not package.path:find(marker, 1, true) then
-    package.path = marker .. ";" .. root .. "/?/init.lua;" .. package.path
+
+  local installed = installed_luamqtt()
+  if installed ~= nil then
+    return installed, nil
   end
 
   if not filesystem.exists(cfg.MQTT_DIR) then

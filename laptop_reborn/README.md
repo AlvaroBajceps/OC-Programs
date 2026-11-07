@@ -150,7 +150,7 @@ shell until the dashboard exits, which is intentional on a dedicated laptop.
 
 | Requirement | Why |
 |---|---|
-| Internet Card | First run downloads the pinned luamqtt sources into `/lib/mqtt`. |
+| Internet Card | Needed for MQTT. The `ab_luamqtt` OPPM package supplies the pinned luamqtt sources locally; only installs without it fall back to downloading into `/lib/mqtt`. |
 | OpenOS 1.8.9 (bundled with the GTNH fork) | `thread`, `event`, `buffer`, `filesystem`. |
 | Lua 5.3 CPU or `defaultLua53=true` | The package targets Lua 5.3. |
 | Broker allow-rule | GTNH OC denies `172.16.0.0/12` by default. |
@@ -278,6 +278,7 @@ return {
   BROKER_PORT = 1883,
   USERNAME = "",
   PASSWORD = "",
+  -- MQTT_CLIENT_ID = "custom_lr",
   ENABLE_MQTT = true,
   ENABLE_REDSTONE = true,
   SCALE = "auto",
@@ -298,6 +299,19 @@ return {
 `-S/--reset-cfg` writes a fresh default table, `-s/--save-cfg` writes the
 effective configuration after CLI overrides. Both write through a temporary
 file and `os.rename` when the filesystem supports it.
+
+Do not copy a saved config between computers. `node`, `client_id`,
+`base_topic`, `topics`, `device`, and `origin` are derived from
+`computer.address()`; serializing them pins the first machine's HA device and
+topics. The MQTT client ID itself is always rebuilt from the address, so a
+copied `client_id` is ignored; use `MQTT_CLIENT_ID` only when you need an
+explicit override. Delete the saved file or remove the identity keys and let
+each computer regenerate its own.
+
+A computer outside the GTNH Docker network cannot use the default
+`BROKER_HOST = "172.16.69.4"`; that address only exists on `gtnh-network`. Use
+the broker's LAN address instead and allow it in that server's
+`OpenComputers.cfg` (see the MQTT integration guide).
 
 ## CLI flags
 
@@ -399,9 +413,10 @@ theme, layout, display, ui, HA, and mqtt_boot specs.
 |---|---|
 | `no supported capacitor/energy storage` | No component exposes either the 24-line sensor API or the direct EU getters. Check the Adapter/cable, or set `DEV_LAPOTRON` to the component address. Run `laptop_reborn --diag` to see what the program can enumerate. |
 | Old `no component API` error persists after `oppm update` | The installed build is stale or an old module was cached in the current shell. `laptop_reborn --version` must report **1.2.3**; if it does not, push/pull the OPPM repo and update again. v1.2.0+ clears its own module cache at startup; reboot once if the old `bin` is still loaded. |
-| `luamqtt unavailable` / `module 'mqtt' not found` | Internet Card missing, `raw.githubusercontent.com` blocked, or `/lib/mqtt` not writable. The supervisor retries every `MQTT_RETRY` seconds; it never exits. |
+| `luamqtt unavailable` / `module 'mqtt' not found` | Internet Card missing, `raw.githubusercontent.com` blocked, or `/lib/mqtt` not writable. Install `ab_luamqtt` with OPPM to avoid the download, or update `laptop_reborn` so its dependency is installed. The supervisor retries every `MQTT_RETRY` seconds; it never exits. |
 | `LINK OFF` / `LINK DISABLED` / `LINK FAULT` | `LINK DISABLED` means MQTT is off (`ENABLE_MQTT = false` or `-M`). `LINK OFF` while MQTT is enabled means the MQTT thread could not start or the luamqtt bootstrap is still running. `LINK FAULT` means the broker refused the connection (CONNACK); a transient network/Internet Card error shows `LINK RETRY` instead. The status column now shows the last `MQTT ...` error, and the shell logs it; a stalled download gives up after `MQTT_DOWNLOAD_TIMEOUT`. |
 | Broker unreachable / `CONNACK` failure | OC filter still denies `172.16.69.4`, Mosquitto listens only on loopback, or the credentials are wrong. The UI keeps running and the link shows `RETRY`/`FAULT`; the session retries until it succeeds. |
+| Second computer on the same server stays on `LINK RETRY` | A second MQTT program on that computer (`mqtt_ha`, the old `laptop`, `anchor_ctl`) may be using the same MQTT client ID and kicking this session off; the broker log shows the client ID being closed/reconnected. Each program now uses a distinct suffix (`_lr`, `_lp`, `_mh`, `_ac`), so update all programs on that computer. Also check that a copied config does not pin the first laptop's `node`; run `laptop_reborn --diag` and compare `mqtt node`/`mqtt client id` across computers. `RETRY` means the TCP transport failed; `FAULT` means TCP opened and the broker refused the CONNACK. |
 | Link stays `RETRY` after the broker is back | Check `MQTT_CONNECT_TIMEOUT` / `MQTT_ACK_TIMEOUT` and the broker log. A half-open socket is detected by missing QoS 1 acknowledgements and the session is restarted automatically. |
 | Back-buffer / VRAM warning | The GPU cannot allocate a full-screen buffer. Lower the scale (`-x 1x`) or use a tier-2 GPU/screen. Without a buffer the display still draws directly. |
 | `already running` | Another `laptop_reborn` survived the previous stop. Stop it or reboot once. Two instances would fight over the MQTT client ID and redstone sides. |

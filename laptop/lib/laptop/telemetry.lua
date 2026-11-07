@@ -73,6 +73,16 @@ function M.dirty_keys(previous, view, ha_module)
   return dirty
 end
 
+function M.detach_default_ioloop(mqtt, client, loop)
+  if type(mqtt) ~= "table" or type(mqtt.get_ioloop) ~= "function" then
+    return
+  end
+  local default_loop = mqtt.get_ioloop(false)
+  if default_loop ~= nil and default_loop ~= loop and type(default_loop.remove) == "function" then
+    pcall(default_loop.remove, default_loop, client)
+  end
+end
+
 ---@param cfg table
 ---@param session table
 ---@param deps table|nil
@@ -115,7 +125,7 @@ function M.run_mqtt_session(cfg, session, deps)
 
     local client_args = {
       uri = cfg.BROKER_HOST .. ":" .. cfg.BROKER_PORT,
-      id = cfg.node,
+      id = cfg.client_id or cfg.node,
       clean = true,
       version = mqtt.v311,
       keep_alive = cfg.KEEP_ALIVE,
@@ -133,8 +143,14 @@ function M.run_mqtt_session(cfg, session, deps)
       client_args.password = cfg.PASSWORD
     end
 
-    local client = mqtt.client(client_args)
     local loop
+    if type(boot.create_ioloop) == "function" then
+      loop = boot.create_ioloop(mqtt)
+    else
+      loop = mqtt.get_ioloop(true, boot.ioloop_options())
+    end
+    local client = mqtt.client(client_args)
+    M.detach_default_ioloop(mqtt, client, loop)
     local tick
 
     -- luamqtt keeps a client registered while reconnect is set, so even a
@@ -203,16 +219,15 @@ function M.run_mqtt_session(cfg, session, deps)
         session.ack_pending_since = nil
         session.link = "RETRY"
         session.reconnect_at = uptime()
-        session.last_error = tostring(err)
-        log("mqtt error: " .. session.last_error)
+        local message = tostring(err)
+        if message:find("connect", 1, true) or message:find("network", 1, true) then
+          message = message .. " @ " .. tostring(cfg.BROKER_HOST) .. ":" .. tostring(cfg.BROKER_PORT)
+        end
+        session.last_error = message
+        log("mqtt error: " .. message)
       end,
     })
 
-    if type(boot.create_ioloop) == "function" then
-      loop = boot.create_ioloop(mqtt)
-    else
-      loop = mqtt.get_ioloop(true, boot.ioloop_options())
-    end
     loop:add(client)
 
     local last_state = uptime()
@@ -327,6 +342,13 @@ function M.run_mqtt_session(cfg, session, deps)
           log("luamqtt unavailable: " .. message)
         end
         session.link = "RETRY"
+        session.last_error = "luamqtt: "
+          .. message
+          .. " (broker "
+          .. tostring(cfg.BROKER_HOST)
+          .. ":"
+          .. tostring(cfg.BROKER_PORT)
+          .. ")"
         if stopped() then
           return
         end
@@ -339,6 +361,7 @@ function M.run_mqtt_session(cfg, session, deps)
       if not ok then
         session.connected = false
         session.link = "RETRY"
+        session.last_error = "session: " .. tostring(err)
         log("mqtt session failed: " .. tostring(err))
       end
       if not stopped() then
@@ -364,13 +387,14 @@ function M.supervise_mqtt(cfg, session, deps)
   local run_session = deps.run_session or M.run_mqtt_session
 
   while session.stop ~= true do
-    local ok = pcall(run_session, cfg, session, deps)
+    local ok, err = pcall(run_session, cfg, session, deps)
     if session.stop == true then
       return
     end
     if not ok then
       session.connected = false
       session.link = "RETRY"
+      session.last_error = "session: " .. tostring(err)
     end
 
     -- Sleep in slices so a quit request does not wait for the full retry delay.
