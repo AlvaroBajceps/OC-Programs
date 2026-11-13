@@ -497,7 +497,7 @@ new file mode 100644
 index 0000000..27f53d8
 --- /dev/null
 +++ b/library/component/me_network.d.lua
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,285 @@
 +---@meta
 +
 +---An item stack stored in an ME network.
