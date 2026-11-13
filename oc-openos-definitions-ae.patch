@@ -297,8 +297,8 @@ index 0000000..b2b0ab8
 +
 +---Get the pattern in the given interface slot.
 +---@param slot? number slot to read, defaults to 1
-+---@return MEItemStack|nil pattern
-+---@overload fun(side: number, slot?: number): MEItemStack|nil
++---@return MEPatternStack|nil pattern
++---@overload fun(side: number, slot?: number): MEPatternStack|nil
 +function me_interface.getInterfacePattern(slot)
 +end
 +
@@ -497,7 +497,7 @@ new file mode 100644
 index 0000000..27f53d8
 --- /dev/null
 +++ b/library/component/me_network.d.lua
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,284 @@
 +---@meta
 +
 +---An item stack stored in an ME network.
@@ -515,6 +515,11 @@ index 0000000..27f53d8
 +---@field tag? string compressed NBT data
 +---@field enchantments? table[] enchantment descriptions
 +---@field isCraftable? boolean whether the item is craftable
++
++---An encoded pattern stored in an ME network or interface.
++---@class MEPatternStack : MEItemStack
++---@field inputs (MEItemStack|MEFluidStack)[] Array of input ingredients
++---@field outputs (MEItemStack|MEFluidStack)[] Array of output results
 +
 +---A fluid stack stored in an ME network.
 +---@class MEFluidStack
