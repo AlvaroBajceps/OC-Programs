@@ -22,6 +22,7 @@ local str_sub = string.sub
 -- Timeouts (in seconds) used by operations that must make progress.
 local CONNECT_TIMEOUT = 10
 local WRITE_TIMEOUT = 10
+local RECV_CHUNK = 4096
 
 local function now()
 	return computer.uptime()
@@ -149,7 +150,7 @@ function luasocket_oc.receive(conn, size)
 	local timeout = conn.timeout
 
 	while #buffer < size do
-		local ok, chunk, err = pcall(sock.read, size - #buffer)
+		local ok, chunk, err = pcall(sock.read, RECV_CHUNK)
 		if not ok then
 			return nil, "internet socket read failed: " .. tostring(chunk)
 		end
