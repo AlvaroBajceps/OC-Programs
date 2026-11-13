@@ -14,6 +14,8 @@ git clone https://github.com/AR2000AR/opencomputers-openos-definitions .dev_env/
 pushd .dev_env/opencomputers-openos-definitions
 echo "  >> Applying computer.getArchitecture.patch"
 git apply ../../computer.getArchitecture.patch
+echo "  >> Applying oc-openos-definitions-ae.patch"
+git apply ../../oc-openos-definitions-ae.patch
 popd
 
 echo ">> Creating basic '.luarc.json'..."

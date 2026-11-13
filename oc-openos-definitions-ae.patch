@@ -1,0 +1,956 @@
+diff --git a/library/component/me_cellworkbench.d.lua b/library/component/me_cellworkbench.d.lua
+new file mode 100644
+index 0000000..c16af20
+--- /dev/null
++++ b/library/component/me_cellworkbench.d.lua
+@@ -0,0 +1,71 @@
++---@meta
++
++---An ME Cell Workbench for configuring storage cells.
++---@class ComponentMECellWorkbench : Component
++local me_cellworkbench = {}
++
++---Returns whether a storage cell is currently inserted.
++---@return boolean inserted
++function me_cellworkbench.hasCell()
++end
++
++---Returns the inserted cell's type (`"item"`, `"fluid"`, `"essentia"`, ...).
++---@return string|nil cellType
++function me_cellworkbench.getCellType()
++end
++
++---Returns details about the inserted cell item itself.
++---@return MEItemStack|nil cell
++function me_cellworkbench.getCell()
++end
++
++---Returns every non-empty partition slot as a table keyed by slot number.
++---@return table<number, MEItemStack> partitions
++function me_cellworkbench.getPartition()
++end
++
++---Set the partition in the given slot. Omit the item to clear the slot.
++---@param slot number 1-based partition slot
++---@param item? table item stack description
++---@return boolean updated
++function me_cellworkbench.setPartition(slot, item)
++end
++
++---Clear every partition slot on the inserted cell.
++---@return boolean cleared
++function me_cellworkbench.clearPartitions()
++end
++
++---Returns the cell's restriction as `(types, amount)`. `(0, 0)` means unrestricted.
++---@return number types, number amount
++function me_cellworkbench.getRestriction()
++end
++
++---Set the cell's restriction. `(0, 0)` means unrestricted.
++---@param types number maximum number of types
++---@param amount number maximum amount per type
++---@return boolean updated
++function me_cellworkbench.setRestriction(types, amount)
++end
++
++---Returns the inserted cell's ore filter string, or an empty string if unset.
++---@return string filter
++function me_cellworkbench.getOreFilter()
++end
++
++---Set the inserted cell's ore filter string.
++---@param filter string
++---@return boolean updated
++function me_cellworkbench.setOreFilter(filter)
++end
++
++---Returns the workbench's copy mode.
++---@return "clear"|"keep" mode
++function me_cellworkbench.getCopyMode()
++end
++
++---Set the workbench's copy mode.
++---@param mode "clear"|"keep"
++---@return boolean updated
++function me_cellworkbench.setCopyMode(mode)
++end
+diff --git a/library/component/me_controller.d.lua b/library/component/me_controller.d.lua
+new file mode 100644
+index 0000000..a74ac06
+--- /dev/null
++++ b/library/component/me_controller.d.lua
+@@ -0,0 +1,5 @@
++---@meta
++
++---The ME Controller exposes the whole ME network to the computer.
++---@class ComponentMEController : ComponentMENetwork
++local me_controller = {}
+diff --git a/library/component/me_exportbus.d.lua b/library/component/me_exportbus.d.lua
+new file mode 100644
+index 0000000..9a7900c
+--- /dev/null
++++ b/library/component/me_exportbus.d.lua
+@@ -0,0 +1,98 @@
++---@meta
++
++---An ME Export Bus. Methods take the side the bus points to as the first
++---argument.
++---@class ComponentMEExportBus : Component
++local me_exportbus = {}
++
++---Get the configuration of the export bus pointing in the specified direction.
++---@param side number
++---@param slot? number slot to read, defaults to 1
++---@return MEItemStack|nil stack
++function me_exportbus.getExportConfiguration(side, slot)
++end
++
++---Configure the export bus pointing in the specified direction.
++---@param side number
++---@param ... number|string|table slot, database address, entry, size or detail table
++---@return boolean configured
++function me_exportbus.setExportConfiguration(side, ...)
++end
++
++---Get the number of valid slots in this export bus.
++---@param side number
++---@return number slots
++function me_exportbus.getExportSlotSize(side)
++end
++
++---Get the ore filter of the export bus pointing in the specified direction.
++---@param side number
++---@return string filter
++function me_exportbus.getExportOreFilter(side)
++end
++
++---Set the ore filter of the export bus pointing in the specified direction.
++---@param side number
++---@param filter string
++---@return boolean updated
++function me_exportbus.setExportOreFilter(side, filter)
++end
++
++---Perform a single export operation into the specified slot.
++---@param side number
++---@param slot number target inventory slot
++---@return boolean|nil moved, string|nil reason
++function me_exportbus.exportIntoSlot(side, slot)
++end
++
++---Get the redstone mode.
++---@param side number
++---@return "IGNORE"|"LOW_SIGNAL"|"HIGH_SIGNAL"|nil mode
++function me_exportbus.getRedstoneControlled(side)
++end
++
++---Set the redstone mode.
++---@param side number
++---@param value "IGNORE"|"LOW_SIGNAL"|"HIGH_SIGNAL"
++---@return boolean updated
++function me_exportbus.setRedstoneControlled(side, value)
++end
++
++---Get the fuzzy mode.
++---@param side number
++---@return "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"|nil mode
++function me_exportbus.getFuzzyMode(side)
++end
++
++---Set the fuzzy mode.
++---@param side number
++---@param value "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"
++---@return boolean updated
++function me_exportbus.setFuzzyMode(side, value)
++end
++
++---Get whether only craftable items are exported.
++---@param side number
++---@return boolean enabled
++function me_exportbus.getCraftOnly(side)
++end
++
++---Set whether only craftable items are exported.
++---@param side number
++---@param value boolean
++---@return boolean updated
++function me_exportbus.setCraftOnly(side, value)
++end
++
++---Get the scheduling mode.
++---@param side number
++---@return "DEFAULT"|"ROUNDROBIN"|nil mode
++function me_exportbus.getSchedulingMode(side)
++end
++
++---Set the scheduling mode.
++---@param side number
++---@param value "DEFAULT"|"ROUNDROBIN"
++---@return boolean updated
++function me_exportbus.setSchedulingMode(side, value)
++end
+diff --git a/library/component/me_importbus.d.lua b/library/component/me_importbus.d.lua
+new file mode 100644
+index 0000000..8f0bd5e
+--- /dev/null
++++ b/library/component/me_importbus.d.lua
+@@ -0,0 +1,65 @@
++---@meta
++
++---An ME Import Bus. Methods take the side the bus points to as the first
++---argument.
++---@class ComponentMEImportBus : Component
++local me_importbus = {}
++
++---Get the configuration of the import bus pointing in the specified direction.
++---@param side number
++---@param slot? number slot to read, defaults to 1
++---@return MEItemStack|nil stack
++function me_importbus.getImportConfiguration(side, slot)
++end
++
++---Configure the import bus pointing in the specified direction.
++---@param side number
++---@param ... number|string|table slot, database address, entry, size or detail table
++---@return boolean configured
++function me_importbus.setImportConfiguration(side, ...)
++end
++
++---Get the number of valid slots in this import bus.
++---@param side number
++---@return number slots
++function me_importbus.getImportSlotSize(side)
++end
++
++---Get the ore filter of the import bus pointing in the specified direction.
++---@param side number
++---@return string filter
++function me_importbus.getImportOreFilter(side)
++end
++
++---Set the ore filter of the import bus pointing in the specified direction.
++---@param side number
++---@param filter string
++---@return boolean updated
++function me_importbus.setImportOreFilter(side, filter)
++end
++
++---Get the redstone mode.
++---@param side number
++---@return "IGNORE"|"LOW_SIGNAL"|"HIGH_SIGNAL"|nil mode
++function me_importbus.getRedstoneControlled(side)
++end
++
++---Set the redstone mode.
++---@param side number
++---@param value "IGNORE"|"LOW_SIGNAL"|"HIGH_SIGNAL"
++---@return boolean updated
++function me_importbus.setRedstoneControlled(side, value)
++end
++
++---Get the fuzzy mode.
++---@param side number
++---@return "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"|nil mode
++function me_importbus.getFuzzyMode(side)
++end
++
++---Set the fuzzy mode.
++---@param side number
++---@param value "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"
++---@return boolean updated
++function me_importbus.setFuzzyMode(side, value)
++end
+diff --git a/library/component/me_interface.d.lua b/library/component/me_interface.d.lua
+new file mode 100644
+index 0000000..b2b0ab8
+--- /dev/null
++++ b/library/component/me_interface.d.lua
+@@ -0,0 +1,182 @@
++---@meta
++
++---An ME Interface (block or part) exposes the ME network and interface
++---configuration/pattern methods to the computer.
++---
++---Block interfaces take the slot as the first argument. Part interfaces take
++---the side as the first argument, followed by the slot.
++---@class ComponentMEInterface : ComponentMENetwork
++local me_interface = {}
++
++---Get the configuration of the interface.
++---@param slot? number slot to read, defaults to 1
++---@return MEItemStack|nil stack
++---@overload fun(side: number, slot?: number): MEItemStack|nil
++function me_interface.getInterfaceConfiguration(slot)
++end
++
++---Configure the interface.
++---
++---Accepted forms:
++---* `setInterfaceConfiguration([slot,] database, entry[, size])`
++---* `setInterfaceConfiguration([slot,] detail)`
++---* part interface: `setInterfaceConfiguration(side[, slot], ...)`
++---@param ... number|string|table
++---@return boolean configured
++function me_interface.setInterfaceConfiguration(...)
++end
++
++---Get the pattern in the given interface slot.
++---@param slot? number slot to read, defaults to 1
++---@return MEItemStack|nil pattern
++---@overload fun(side: number, slot?: number): MEItemStack|nil
++function me_interface.getInterfacePattern(slot)
++end
++
++---Set the pattern input at the given index.
++---@param ... number|string|table
++---@return boolean configured
++function me_interface.setInterfacePatternInput(...)
++end
++
++---Set the pattern output at the given index.
++---@param ... number|string|table
++---@return boolean configured
++function me_interface.setInterfacePatternOutput(...)
++end
++
++---Store the pattern input at the given index to a database entry.
++---@param ... number|string
++---@return boolean stored
++function me_interface.storeInterfacePatternInput(...)
++end
++
++---Store the pattern output at the given index to a database entry.
++---@param ... number|string
++---@return boolean stored
++function me_interface.storeInterfacePatternOutput(...)
++end
++
++---Clear the pattern input at the given index.
++---@param ... number
++---@return boolean cleared
++function me_interface.clearInterfacePatternInput(...)
++end
++
++---Clear the pattern output at the given index.
++---@param ... number
++---@return boolean cleared
++function me_interface.clearInterfacePatternOutput(...)
++end
++
++---Get whether blocking mode is enabled.
++---@param side? number side of a part interface, omit for a block interface
++---@return boolean enabled
++function me_interface.getBlockingMode(side)
++end
++
++---Set whether blocking mode is enabled.
++---@param side number side of a part interface
++---@param value boolean
++---@return boolean updated
++---@overload fun(value: boolean): boolean
++function me_interface.setBlockingMode(side, value)
++end
++
++---Get whether smart blocking is enabled.
++---@param side? number side of a part interface, omit for a block interface
++---@return boolean enabled
++function me_interface.getSmartBlock(side)
++end
++
++---Set whether smart blocking is enabled.
++---@param side number side of a part interface
++---@param value boolean
++---@return boolean updated
++---@overload fun(value: boolean): boolean
++function me_interface.setSmartBlock(side, value)
++end
++
++---Get whether the interface is visible in interface terminals.
++---@param side? number side of a part interface, omit for a block interface
++---@return boolean visible
++function me_interface.getInterfaceTerminal(side)
++end
++
++---Set whether the interface is visible in interface terminals.
++---@param side number side of a part interface
++---@param value boolean
++---@return boolean updated
++---@overload fun(value: boolean): boolean
++function me_interface.setInterfaceTerminal(side, value)
++end
++
++---Get the insertion mode.
++---@param side? number side of a part interface, omit for a block interface
++---@return "DEFAULT"|"PREFER_EMPTY"|"ONLY_EMPTY"|nil mode
++function me_interface.getInsertionMode(side)
++end
++
++---Set the insertion mode.
++---@param side number side of a part interface
++---@param value "DEFAULT"|"PREFER_EMPTY"|"ONLY_EMPTY"
++---@return boolean updated
++---@overload fun(value: "DEFAULT"|"PREFER_EMPTY"|"ONLY_EMPTY"): boolean
++function me_interface.setInsertionMode(side, value)
++end
++
++---Get the advanced blocking mode.
++---@param side? number side of a part interface, omit for a block interface
++---@return "DEFAULT"|"BLOCK_ON_ALL"|nil mode
++function me_interface.getAdvancedBlockingMode(side)
++end
++
++---Set the advanced blocking mode.
++---@param side number side of a part interface
++---@param value "DEFAULT"|"BLOCK_ON_ALL"
++---@return boolean updated
++---@overload fun(value: "DEFAULT"|"BLOCK_ON_ALL"): boolean
++function me_interface.setAdvancedBlockingMode(side, value)
++end
++
++---Get the crafting lock mode.
++---@param side? number side of a part interface, omit for a block interface
++---@return "NONE"|"LOCK_UNTIL_PULSE"|"LOCK_WHILE_HIGH"|"LOCK_WHILE_LOW"|nil mode
++function me_interface.getLockCraftingMode(side)
++end
++
++---Set the crafting lock mode.
++---@param side number side of a part interface
++---@param value "NONE"|"LOCK_UNTIL_PULSE"|"LOCK_WHILE_HIGH"|"LOCK_WHILE_LOW"
++---@return boolean updated
++---@overload fun(value: "NONE"|"LOCK_UNTIL_PULSE"|"LOCK_WHILE_HIGH"|"LOCK_WHILE_LOW"): boolean
++function me_interface.setLockCraftingMode(side, value)
++end
++
++---Get whether pattern optimization is enabled.
++---@param side? number side of a part interface, omit for a block interface
++---@return boolean enabled
++function me_interface.getPatternOptimization(side)
++end
++
++---Set whether pattern optimization is enabled.
++---@param side number side of a part interface
++---@param value boolean
++---@return boolean updated
++---@overload fun(value: boolean): boolean
++function me_interface.setPatternOptimization(side, value)
++end
++
++---Get the fuzzy mode.
++---@param side? number side of a part interface, omit for a block interface
++---@return "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"|nil mode
++function me_interface.getFuzzyMode(side)
++end
++
++---Set the fuzzy mode.
++---@param side number side of a part interface
++---@param value "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"
++---@return boolean updated
++---@overload fun(value: "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"): boolean
++function me_interface.setFuzzyMode(side, value)
++end
+diff --git a/library/component/me_interface_terminal.d.lua b/library/component/me_interface_terminal.d.lua
+new file mode 100644
+index 0000000..6abfbec
+--- /dev/null
++++ b/library/component/me_interface_terminal.d.lua
+@@ -0,0 +1,37 @@
++---@meta
++
++---An ME Interface Terminal for listing interfaces and moving patterns between
++---them.
++---@class ComponentMEInterfaceTerminal : Component
++local me_interface_terminal = {}
++
++---Returns a list of all interfaces visible to the terminal.
++---@return MEInterfaceViewableArray interfaces
++function me_interface_terminal.getInterfaces()
++end
++
++---Returns a list of interfaces with the specified display name.
++---@param filter string interface display name
++---@return MEInterfaceViewableArray interfaces
++function me_interface_terminal.getInterfacesByName(filter)
++end
++
++---Returns a list of interfaces at the specified location.
++---@param location MELocation
++---@param side? number|string side the interface is attached to
++---@return MEInterfaceViewableArray interfaces
++function me_interface_terminal.getInterfacesByLocation(location, side)
++end
++
++---Send a pattern from a source interface to a target interface.
++---@param source table `{ location: MELocation, slot: number }`
++---@param target table `{ location: MELocation, slot?: number }`
++---@return boolean success, number|string result target slot or error message
++function me_interface_terminal.send(source, target)
++end
++
++---Execute multiple pattern transfers in one batch.
++---@param tasks table[] array of `{ source = ..., target = ... }` entries
++---@return table[] results array of `[success, slotOrError]` results
++function me_interface_terminal.sendBatch(tasks)
++end
+diff --git a/library/component/me_network.d.lua b/library/component/me_network.d.lua
+new file mode 100644
+index 0000000..27f53d8
+--- /dev/null
++++ b/library/component/me_network.d.lua
+@@ -0,0 +1,280 @@
++---@meta
++
++---An item stack stored in an ME network.
++---@class MEItemStack
++---@field name string unlocalized item name, e.g. `minecraft:stone`
++---@field label string display name
++---@field damage number item damage/metadata value
++---@field maxDamage number maximum damage value
++---@field size number stack size in the network
++---@field maxSize number maximum stack size
++---@field hasTag boolean whether the stack has an NBT tag
++---@field id? number numeric item ID (only when `insertIdsInConverters` is enabled)
++---@field oreNames? string[] ore dictionary names
++---@field lore? string item lore
++---@field tag? string compressed NBT data
++---@field enchantments? table[] enchantment descriptions
++---@field isCraftable? boolean whether the item is craftable
++
++---A fluid stack stored in an ME network.
++---@class MEFluidStack
++---@field name string fluid name
++---@field label string display name
++---@field amount number amount in millibuckets
++---@field hasTag boolean whether the stack has an NBT tag
++---@field id? number numeric fluid ID (only when `insertIdsInConverters` is enabled)
++---@field size? number stack size in the network
++---@field isCraftable? boolean whether the fluid is craftable
++
++---Information about a crafting CPU.
++---@class MECpuInfo
++---@field name string CPU name
++---@field storage number available storage in bytes
++---@field coprocessors number number of coprocessors
++---@field busy boolean whether the CPU is currently crafting
++---@field cpu MECpu handle for querying and cancelling the CPU's job
++
++---A crafting CPU handle returned by `getCpus`.
++---@class MECpu
++local cpu = {}
++
++---Cancel this CPU's current crafting job.
++---@return boolean cancelled
++function cpu.cancel()
++end
++
++---Returns whether the CPU is active.
++---@return boolean active
++function cpu.isActive()
++end
++
++---Returns whether the CPU is busy.
++---@return boolean busy
++function cpu.isBusy()
++end
++
++---Get the items currently being crafted.
++---@return MEItemStack[] items
++function cpu.activeItems()
++end
++
++---Get the items waiting to be crafted.
++---@return MEItemStack[] items
++function cpu.pendingItems()
++end
++
++---Get the items stored in the CPU.
++---@return MEItemStack[] items
++function cpu.storedItems()
++end
++
++---Get the final output of the current crafting job.
++---@return MEItemStack|nil output, string|nil reason
++function cpu.finalOutput()
++end
++
++---A crafting request handle returned by `MECraftable.request`.
++---@class MECraftingStatus
++local status = {}
++
++---Returns whether the crafting request is still being computed.
++---@return boolean computing
++function status.isComputing()
++end
++
++---Returns whether the crafting request has failed.
++---@return boolean failed, string|nil reason
++function status.hasFailed()
++end
++
++---Returns whether the crafting request has been cancelled.
++---@return boolean cancelled, string|nil reason
++function status.isCanceled()
++end
++
++---Returns whether the crafting request is done.
++---@return boolean done, string|nil reason
++function status.isDone()
++end
++
++---Cancel the crafting request.
++---Only available in upstream OpenComputers; the GTNH fork does not provide it.
++---@return boolean|nil cancelled, string|nil reason
++function status.cancel()
++end
++
++---A craftable item returned by `getCraftables` or `getCraftable`.
++---@class MECraftable
++local craftable = {}
++
++---Returns the item stack representation of the crafting result.
++---@return MEItemStack stack
++function craftable.getStack()
++end
++
++---Returns the number of requests in progress for this item.
++---Only available in upstream OpenComputers; the GTNH fork does not provide it.
++---@return number requests
++function craftable.requesting()
++end
++
++---Request this item to be crafted.
++---@param amount? number amount to craft, defaults to 1
++---@param prioritizePower? boolean defaults to true
++---@param cpuName? string name of the CPU to use, defaults to any CPU
++---@return MECraftingStatus|nil status, string|nil reason
++function craftable.request(amount, prioritizePower, cpuName)
++end
++
++---Iterator over the items stored in an ME network.
++---@class MEItemNetworkContents
++---@operator call:MEItemStack|nil
++local contents = {}
++
++---A location in the world.
++---@class MELocation
++---@field x number
++---@field y number
++---@field z number
++---@field dimId? number dimension ID
++
++---Information about an ME interface returned by an interface terminal.
++---@class MEInterfaceViewable
++---@field name string interface display name
++---@field location MELocation interface location
++---@field side number side the interface part is attached to
++---@field patterns table<number, MEItemStack> configured patterns, keyed by slot
++
++---A list of interfaces returned by `me_interface_terminal`.
++---@class MEInterfaceViewableArray
++---@operator call:MEInterfaceViewable|nil
++local viewables = {}
++
++---Reset the iterator index so the next call returns the first element.
++function viewables.reset()
++end
++
++---Returns the number of elements in the list.
++---@return number count
++function viewables.count()
++end
++
++---Returns all interface information as a table.
++---@param includePatterns? boolean include pattern stacks, defaults to false
++---@return MEInterfaceViewable[] interfaces
++function viewables.getAll(includePatterns)
++end
++
++---Common API shared by AE network components (`me_controller`, `me_interface`
++---and the `upgrade_me` component).
++---@class ComponentMENetwork : Component
++local network = {}
++
++---Get a list of tables representing the available CPUs in the network.
++---@return MECpuInfo[] cpus
++function network.getCpus()
++end
++
++---Get a known recipe. This can be used to issue crafting requests.
++---@param detail table item stack description
++---@param type string AE stack type, e.g. `"item"` or `"fluid"`
++---@return MECraftable|nil craftable
++function network.getCraftable(detail, type)
++end
++
++---Get a list of known recipes that can be used to issue crafting requests.
++---@param filter? table<string, any> optional field filter
++---@return MECraftable[] craftables
++function network.getCraftables(filter)
++end
++
++---Get a list of the stored items in the network.
++---@param filter? table<string, any> optional field filter
++---@return MEItemStack[] items
++function network.getItemsInNetwork(filter)
++end
++
++---Get a stored item by its name or numeric ID.
++---@param nameOrId string|number unlocalized item name or numeric ID
++---@param damage? number item damage/metadata
++---@param nbt? string SNBT string
++---@return MEItemStack|nil item
++---@overload fun(detail: table): MEItemStack|nil
++function network.getItemInNetwork(nameOrId, damage, nbt)
++end
++
++---Get stored items matching an array of item IDs or names.
++---@param filter table<number, string|number> item IDs or names
++---@return MEItemStack[] items
++function network.getItemsInNetworkById(filter)
++end
++
++---Get a stored fluid by its name or description.
++---@param nameOrDetail string|table fluid name or fluid stack description
++---@return MEFluidStack|nil fluid
++function network.getFluidInNetwork(nameOrDetail)
++end
++
++---Get an iterator over the items in the network.
++---@return MEItemNetworkContents contents
++function network.allItems()
++end
++
++---Store items matching the filter in the database with the specified address.
++---@param filter table<string, any> field filter
++---@param dbAddress string database component address
++---@param startSlot? number first database slot to use
++---@param count? number maximum number of entries to store
++---@return boolean stored
++function network.store(filter, dbAddress, startSlot, count)
++end
++
++---Get a list of the stored fluids in the network.
++---@return MEFluidStack[] fluids
++function network.getFluidsInNetwork()
++end
++
++---Get the average power injection into the network.
++---@return number power
++function network.getAvgPowerInjection()
++end
++
++---Get the average power usage of the network.
++---@return number power
++function network.getAvgPowerUsage()
++end
++
++---Get the idle power usage of the network.
++---@return number power
++function network.getIdlePowerUsage()
++end
++
++---Get the maximum stored power in the network.
++---@return number power
++function network.getMaxStoredPower()
++end
++
++---Get the stored power in the network.
++---@return number power
++function network.getStoredPower()
++end
++
++---Enable or disable the `network_fluid_changed` event subscription.
++---@param enabled boolean
++function network.setFluidEventSubscription(enabled)
++end
++
++---Returns whether the `network_fluid_changed` event subscription is enabled.
++---@return boolean enabled
++function network.isFluidEventSubscription()
++end
++
++---Enable or disable the `network_item_changed` event subscription.
++---@param enabled boolean
++function network.setItemEventSubscription(enabled)
++end
++
++---Returns whether the `network_item_changed` event subscription is enabled.
++---@return boolean enabled
++function network.isItemEventSubscription()
++end
+diff --git a/library/component/me_storagebus.d.lua b/library/component/me_storagebus.d.lua
+new file mode 100644
+index 0000000..dcbcc8a
+--- /dev/null
++++ b/library/component/me_storagebus.d.lua
+@@ -0,0 +1,104 @@
++---@meta
++
++---An ME Storage Bus. Methods take the side the bus points to as the first
++---argument.
++---@class ComponentMEStorageBus : Component
++local me_storagebus = {}
++
++---Get the configuration of the storage bus pointing in the specified direction.
++---@param side number
++---@param slot? number slot to read, defaults to 1
++---@return MEItemStack|nil stack
++function me_storagebus.getStorageConfiguration(side, slot)
++end
++
++---Configure the storage bus pointing in the specified direction.
++---@param side number
++---@param ... number|string|table slot, database address, entry, size or detail table
++---@return boolean configured
++function me_storagebus.setStorageConfiguration(side, ...)
++end
++
++---Get the ore filter of the storage bus pointing in the specified direction.
++---@param side number
++---@return string filter
++function me_storagebus.getStorageOreFilter(side)
++end
++
++---Set the ore filter of the storage bus pointing in the specified direction.
++---@param side number
++---@param filter string
++---@return boolean updated
++function me_storagebus.setStorageOreFilter(side, filter)
++end
++
++---Get the number of valid slots in this storage bus.
++---@param side number
++---@return number slots
++function me_storagebus.getStorageSlotSize(side)
++end
++
++---Get the access mode.
++---@param side number
++---@return "READ_WRITE"|"READ"|"WRITE"|nil mode
++function me_storagebus.getAccess(side)
++end
++
++---Set the access mode.
++---@param side number
++---@param value "READ_WRITE"|"READ"|"WRITE"
++---@return boolean updated
++function me_storagebus.setAccess(side, value)
++end
++
++---Get the extraction mode.
++---@param side number
++---@return "STRICT"|"LOOSE"|nil mode
++function me_storagebus.getExtractionMode(side)
++end
++
++---Set the extraction mode.
++---@param side number
++---@param value "STRICT"|"LOOSE"
++---@return boolean updated
++function me_storagebus.setExtractionMode(side, value)
++end
++
++---Get the fuzzy mode.
++---@param side number
++---@return "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"|nil mode
++function me_storagebus.getFuzzyMode(side)
++end
++
++---Set the fuzzy mode.
++---@param side number
++---@param value "IGNORE_ALL"|"PERCENT_99"|"PERCENT_75"|"PERCENT_50"|"PERCENT_25"|"PERCENT_10"|"PERCENT_1"
++---@return boolean updated
++function me_storagebus.setFuzzyMode(side, value)
++end
++
++---Get the storage filter.
++---@param side number
++---@return "NONE"|"EXTRACTABLE_ONLY"|nil filter
++function me_storagebus.getStorageFilter(side)
++end
++
++---Set the storage filter.
++---@param side number
++---@param value "NONE"|"EXTRACTABLE_ONLY"
++---@return boolean updated
++function me_storagebus.setStorageFilter(side, value)
++end
++
++---Get whether sticky mode is enabled.
++---@param side number
++---@return boolean enabled
++function me_storagebus.getStickyMode(side)
++end
++
++---Set whether sticky mode is enabled.
++---@param side number
++---@param value boolean
++---@return boolean updated
++function me_storagebus.setStickyMode(side, value)
++end
+diff --git a/library/component/upgrade_me.d.lua b/library/component/upgrade_me.d.lua
+new file mode 100644
+index 0000000..17d8bcb
+--- /dev/null
++++ b/library/component/upgrade_me.d.lua
+@@ -0,0 +1,41 @@
++---@meta
++
++---The AE upgrade exposes the ME network to a robot or drone as the
++---`upgrade_me` component.
++---@class ComponentUpgradeME : ComponentMENetwork
++local upgrade_me = {}
++
++---Transfer items from the robot's selected slot to the ME network.
++---@param amount? number amount to transfer, defaults to 64
++---@return number transferred
++function upgrade_me.sendItems(amount)
++end
++
++---Request items from the ME network into the robot's selected slot.
++---@param database string database component address
++---@param entry number database entry
++---@param amount? number amount to request
++---@return number extracted
++---@overload fun(detail: table): number
++function upgrade_me.requestItems(database, entry, amount)
++end
++
++---Transfer fluid from the robot's selected tank to the ME network.
++---@param amount? number amount to transfer
++---@return number transferred
++function upgrade_me.sendFluids(amount)
++end
++
++---Request fluid from the ME network into the robot's selected tank.
++---@param database string database component address
++---@param entry number database entry
++---@param amount? number amount to request
++---@return number extracted
++---@overload fun(detail: table): number
++function upgrade_me.requestFluids(database, entry, amount)
++end
++
++---Returns whether the upgrade is linked to an ME network.
++---@return boolean linked
++function upgrade_me.isLinked()
++end
+diff --git a/library/lib/component.lua b/library/lib/component.lua
+index a874956..f256912 100644
+--- a/library/lib/component.lua
++++ b/library/lib/component.lua
+@@ -7,6 +7,14 @@
+ 
+ ---The component API is used to access and interact with components available to a computer.
+ ---@class componentlib
++---@field me_controller ComponentMEController
++---@field me_interface ComponentMEInterface
++---@field me_exportbus ComponentMEExportBus
++---@field me_importbus ComponentMEImportBus
++---@field me_storagebus ComponentMEStorageBus
++---@field me_cellworkbench ComponentMECellWorkbench
++---@field me_interface_terminal ComponentMEInterfaceTerminal
++---@field upgrade_me ComponentUpgradeME
+ ---@field transposer ComponentTransposer
+ ---@field modem ComponentModem
+ ---@field tunnel ComponentTunnel
